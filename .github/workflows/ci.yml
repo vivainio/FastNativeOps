@@ -31,12 +31,9 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          expected=$(ls -A /usr/bin | wc -l)
-          backends="Readdir"; [ "$RUNNER_OS" = "Linux" ] && backends="Readdir Getdents64"
-          for fw in net8.0 net10.0; do for b in $backends; do
-            got=$(dotnet run -c Release -f $fw --no-build --project samples/ls-sample -- /usr/bin 0 $b | wc -l)
-            echo "$fw $b: $got (expected $expected)"; [ "$got" = "$expected" ]
-          done; done
+          for fw in net8.0 net10.0; do
+            scripts/check-backends.sh samples/ls-sample/bin/Release/$fw/ls-sample.dll /usr/bin /etc
+          done
 
   publish:
     if: github.event_name == 'release'

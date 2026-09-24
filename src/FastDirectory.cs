@@ -44,5 +44,35 @@ public static class FastDirectory
         if (n > 0) yield return buf[..n];
     }
 
+    /// <summary>
+    /// Like <see cref="EnumerateBatches"/> but yields one reused <see cref="DirectoryBatch"/> holding UTF-8 names,
+    /// avoiding per-entry string and per-batch array allocations. Fastest on Linux x64/arm64 (getdents64);
+    /// other platforms emulate it by copying names into the same buffer. Do not keep the batch past the next iteration.
+    /// </summary>
+    public static IEnumerable<DirectoryBatch> EnumerateBatchBuffers(
+        string path, int batchSize, NativeBackend backend = NativeBackend.Auto)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
+        if (!OperatingSystem.IsWindows() && Unix.UnixDirectory.UsesGetdents(backend))
+            return Unix.UnixDirectory.EnumerateGetdentsBatches(path, batchSize);
+        return EmulatedBatchBuffers(path, batchSize, backend);
+    }
+
+    private static IEnumerable<DirectoryBatch> EmulatedBatchBuffers(string path, int batchSize, NativeBackend backend)
+    {
+        var batch = new DirectoryBatch(batchSize);
+        foreach (var e in Enumerate(path, backend))
+        {
+            batch.Add(e.Name, e.Type);
+            if (batch.Count == batchSize)
+            {
+                yield return batch;
+                batch.Clear();
+            }
+        }
+        if (batch.Count > 0) yield return batch;
+    }
+
     public static List<FileEntry> List(string path) => Enumerate(path).ToList();
 }

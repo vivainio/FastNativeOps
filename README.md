@@ -29,6 +29,24 @@ For directories with thousands of entries:
 foreach (FileEntry[] batch in FastDirectory.EnumerateBatches(path, 1000)) { /* ... */ }
 ```
 
+### Batch buffers (fewer allocations)
+
+`EnumerateBatchBuffers` yields one reused `DirectoryBatch` with names stored as UTF-8 in a single buffer, so there is
+no per-entry string and no per-batch array:
+
+```csharp
+foreach (DirectoryBatch batch in FastDirectory.EnumerateBatchBuffers(path, 1000))
+    for (int i = 0; i < batch.Count; i++)
+    {
+        ReadOnlySpan<byte> name = batch.GetNameUtf8(i);   // no allocation
+        if (batch.GetType(i) == EntryType.File && name.EndsWith(".cs"u8)) { /* ... */ }
+    }
+```
+
+Do not keep the batch or its spans past the next iteration (`batch.ToArray()` copies out). This is fully zero-copy on
+Linux x64/arm64 (`getdents64`); on other platforms it is emulated by copying names into the same buffer, so the API is
+identical but the allocation savings are smaller.
+
 ### Choosing a backend
 
 `NativeBackend.Auto` (default) picks the best backend for the platform. Force one with:

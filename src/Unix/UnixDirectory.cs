@@ -138,6 +138,82 @@ internal static unsafe partial class UnixDirectory
         }
     }
 
+    internal static bool UsesGetdents(NativeBackend backend) => backend switch
+    {
+        NativeBackend.Readdir => false,
+        NativeBackend.Getdents64 when SysGetdents64 == 0
+            => throw new PlatformNotSupportedException("getdents64 is only supported on Linux x64/arm64."),
+        NativeBackend.Getdents64 => true,
+        _ => SysGetdents64 != 0,
+    };
+
+    // Parses records from pos until the batch is full or the buffer is consumed; returns the new pos.
+    private static int FillBatch(byte[] buf, int pos, int n, DirectoryBatch batch, string path)
+    {
+        while (pos < n && batch.Count < batch.Capacity)
+        {
+            var rec = buf.AsSpan(pos);
+            int reclen = BitConverter.ToUInt16(rec[16..18]);
+            byte dtype = rec[18];
+            var name = rec[19..reclen];
+            name = name[..name.IndexOf((byte)0)];
+            pos += reclen;
+
+            if (name is [(byte)'.'] or [(byte)'.', (byte)'.']) continue;
+            var type = dtype switch
+            {
+                DT_REG => EntryType.File,
+                DT_DIR => EntryType.Directory,
+                DT_LNK => EntryType.SymbolicLink,
+                0 => Probe(path, System.Text.Encoding.UTF8.GetString(name)),
+                _ => EntryType.Other,
+            };
+            batch.Add(name, type);
+        }
+        return pos;
+    }
+
+    /// <summary>Zero-allocation batches straight from the kernel's getdents64 buffer. The same batch is reused.</summary>
+    internal static IEnumerable<DirectoryBatch> EnumerateGetdentsBatches(string path, int batchSize)
+    {
+        nint dir = opendir(path);
+        if (dir == 0)
+            throw new IOException($"Cannot open '{path}' (errno {Marshal.GetLastPInvokeError()})");
+        var buf = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        var batch = new DirectoryBatch(batchSize);
+        try
+        {
+            int fd = dirfd(dir), pos = 0, n = 0;
+            while (true)
+            {
+                if (pos >= n)
+                {
+                    n = GetDents(fd, buf);
+                    pos = 0;
+                    if (n < 0)
+                    {
+                        int errno = Marshal.GetLastPInvokeError();
+                        if (errno == EINTR) { n = 0; continue; }
+                        throw new IOException($"Cannot read '{path}' (errno {errno})");
+                    }
+                    if (n == 0) break;
+                }
+                pos = FillBatch(buf, pos, n, batch, path);
+                if (batch.Count == batch.Capacity)
+                {
+                    yield return batch;
+                    batch.Clear();
+                }
+            }
+            if (batch.Count > 0) yield return batch;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buf);
+            closedir(dir);
+        }
+    }
+
     public static IEnumerable<FileEntry> Enumerate(string path, NativeBackend backend)
     {
         switch (backend)
