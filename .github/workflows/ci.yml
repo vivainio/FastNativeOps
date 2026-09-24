@@ -42,16 +42,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
-    container: mcr.microsoft.com/dotnet/sdk:10.0-alpine
     steps:
       - uses: actions/checkout@v7
       - name: Backend check (musl)
         run: |
-          expected=$(ls -A /usr/bin | wc -l)
-          for b in Readdir Getdents64; do
-            got=$(dotnet run -c Release --project samples/ls-sample -- /usr/bin 0 $b | wc -l)
-            echo "$b: $got (expected $expected)"; [ "$got" = "$expected" ]
-          done
+          docker run --rm -e DOTNET_NOLOGO=1 -v "$PWD":/src -w /src \
+            mcr.microsoft.com/dotnet/sdk:10.0-alpine sh -c '
+              expected=$(ls -A /usr/bin | wc -l)
+              for b in Readdir Getdents64; do
+                got=$(dotnet run -c Release --project samples/ls-sample -- /usr/bin 0 $b | wc -l)
+                echo "$b: $got (expected $expected)"; [ "$got" = "$expected" ] || exit 1
+              done'
 
   publish:
     if: github.event_name == 'release'
