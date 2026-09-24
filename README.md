@@ -1,6 +1,8 @@
 # FastNativeOps
 
-Fast cross-platform file system access for .NET using direct P/Invoke.
+Fast file system access for .NET using direct P/Invoke.
+
+**Documentation: https://vivainio.github.io/FastNativeOps/**
 
 | Platform | Backend |
 |---|---|
