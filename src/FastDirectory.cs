@@ -71,7 +71,7 @@ public static class FastDirectory
     private static IEnumerable<DirectoryBatch> EmulatedBatchBuffers(
         string path, int batchSize, NativeBackend backend, StatFields fields, int parallelism)
     {
-        var batch = new DirectoryBatch(batchSize, fields);
+        var batch = new DirectoryBatch(batchSize, fields) { DirectoryPath = path };
         foreach (var e in Enumerate(path, backend))
         {
             batch.Add(e.Name, e.Type);
@@ -86,6 +86,72 @@ public static class FastDirectory
         {
             if (fields != StatFields.None) StatEmulation.Fill(path, batch, batch.Count >= FastNativeOptions.StatParallelMinEntries ? parallelism : 1);
             yield return batch;
+        }
+    }
+
+    /// <summary>
+    /// Recursively lists a directory tree, yielding one reused <see cref="DirectoryBatch"/> at a time. A batch never
+    /// spans directories: see <see cref="DirectoryBatch.DirectoryPath"/> and <see cref="DirectoryBatch.Depth"/>.
+    /// Symbolic links are reported but not followed. On Linux x64/arm64 the walk opens each subdirectory with
+    /// openat relative to its parent's file descriptor (no path length limit, one path component resolved per open;
+    /// needs about one file descriptor per level of depth); elsewhere it is emulated with path-based enumeration.
+    /// Order is unspecified. Do not keep the batch past the next iteration.
+    /// </summary>
+    public static IEnumerable<DirectoryBatch> WalkBatchBuffers(string root, int batchSize, WalkOptions? options = null)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(root);
+        ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
+        options ??= new WalkOptions();
+        ArgumentOutOfRangeException.ThrowIfNegative(options.MaxDepth);
+        ArgumentOutOfRangeException.ThrowIfNegative(options.StatParallelism);
+        int par = options.StatParallelism == 0 ? FastNativeOptions.StatParallelism : options.StatParallelism;
+        if (!OperatingSystem.IsWindows() && Unix.UnixDirectory.UsesGetdents(options.Backend))
+            return Unix.UnixDirectory.WalkGetdents(root, batchSize, options, par);
+        return WalkEmulated(root, batchSize, options, par);
+    }
+
+    private static IEnumerable<DirectoryBatch> WalkEmulated(string root, int batchSize, WalkOptions o, int par)
+    {
+        var batch = new DirectoryBatch(batchSize, o.Fields);
+        var stack = new Stack<(string Path, int Depth)>();
+        stack.Push((root, 0));
+        while (stack.Count > 0)
+        {
+            var (path, depth) = stack.Pop();
+            batch.Clear();
+            batch.DirectoryPath = path;
+            batch.Depth = depth;
+            var subdirs = new List<string>();
+            using var it = Enumerate(path, o.Backend).GetEnumerator();
+            while (true)
+            {
+                try
+                {
+                    if (!it.MoveNext()) break;
+                }
+                catch (Exception e) when (depth > 0 && o.IgnoreInaccessible && e is IOException or UnauthorizedAccessException)
+                {
+                    break;
+                }
+                var entry = it.Current;
+                batch.Add(entry.Name, entry.Type);
+                if (entry.Type == EntryType.Directory && depth < o.MaxDepth) subdirs.Add(entry.Name);
+                if (batch.Count == batchSize)
+                {
+                    if (o.Fields != StatFields.None) StatEmulation.Fill(path, batch, par);
+                    yield return batch;
+                    batch.Clear();
+                }
+            }
+            if (batch.Count > 0)
+            {
+                if (o.Fields != StatFields.None) StatEmulation.Fill(path, batch, par);
+                yield return batch;
+                batch.Clear();
+            }
+            for (int i = subdirs.Count - 1; i >= 0; i--)
+                if (o.ShouldDescend?.Invoke(subdirs[i], depth + 1) ?? true)
+                    stack.Push((Path.Join(path, subdirs[i]), depth + 1));
         }
     }
 

@@ -11,6 +11,20 @@ foreach (var a in args)
 }
 bool buf = args.Contains("buf"), stat = args.Contains("stat"), cached = args.Contains("cached");
 
+if (args.Contains("walk"))
+{
+    // usage: ls-sample <dir> 500 [Backend] walk [stat] [cached] [par=N]  -> prints "entries dirs maxDepth"
+    long entries = 0, dirs = 0; int maxDepth = 0;
+    var wo = new WalkOptions { Backend = backend, Fields = stat ? StatFields.Size | StatFields.ModifiedTime : StatFields.None, AllowCachedAttributes = cached, StatParallelism = par };
+    foreach (var batch in FastDirectory.WalkBatchBuffers(dir, args.Length > 1 && int.TryParse(args[1], out var wb) && wb > 0 ? wb : 500, wo))
+    {
+        maxDepth = Math.Max(maxDepth, batch.Depth);
+        for (int i = 0; i < batch.Count; i++) { entries++; if (batch.GetType(i) == EntryType.Directory) dirs++; }
+    }
+    Console.WriteLine($"{entries} {dirs} {maxDepth}");
+    return;
+}
+
 if (args.Contains("diag"))
 {
     // Did the statx fast path stay enabled (false = statx never had to fall back)?

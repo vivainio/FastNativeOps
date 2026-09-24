@@ -55,6 +55,12 @@ public sealed class DirectoryBatch
 
     public int Count { get; private set; }
 
+    /// <summary>The directory these entries belong to (the path passed in, joined with subdirectory names when walking).</summary>
+    public string DirectoryPath { get; internal set; } = "";
+
+    /// <summary>Depth of <see cref="DirectoryPath"/> below the root of a walk (0 for the root and for non-walk enumeration).</summary>
+    public int Depth { get; internal set; }
+
     public ReadOnlySpan<byte> GetNameUtf8(int index)
     {
         if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));

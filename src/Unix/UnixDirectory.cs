@@ -337,7 +337,7 @@ internal static unsafe partial class UnixDirectory
         if (dir == 0)
             throw new IOException($"Cannot open '{path}' (errno {Marshal.GetLastPInvokeError()})");
         var buf = ArrayPool<byte>.Shared.Rent(64 * 1024);
-        var batch = new DirectoryBatch(batchSize, fields);
+        var batch = new DirectoryBatch(batchSize, fields) { DirectoryPath = path };
         int minEntries = FastNativeOptions.StatParallelMinEntries;
         try
         {

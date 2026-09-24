@@ -47,6 +47,28 @@ Do not keep the batch or its spans past the next iteration (`batch.ToArray()` co
 Linux x64/arm64 (`getdents64`); on other platforms it is emulated by copying names into the same buffer, so the API is
 identical but the allocation savings are smaller.
 
+### Recursive walk
+
+```csharp
+var options = new WalkOptions
+{
+    MaxDepth = 8,
+    Fields = StatFields.Size | StatFields.ModifiedTime,
+    IgnoreInaccessible = true,
+    ShouldDescend = (name, depth) => name != ".git",   // prune subtrees
+};
+foreach (DirectoryBatch batch in FastDirectory.WalkBatchBuffers("/mnt/data", 1000, options))
+    for (int i = 0; i < batch.Count; i++)
+        Console.WriteLine($"{batch.DirectoryPath}/{batch.GetName(i)}  (depth {batch.Depth})");
+```
+
+Each batch holds entries from a single directory (`DirectoryPath`, `Depth`); order is unspecified; symbolic links are
+reported but never followed, so link loops cannot occur. On Linux x64/arm64 every subdirectory is opened with `openat`
+relative to its parent's file descriptor, so there is no path length limit (trees deeper than `PATH_MAX` work) and only
+one path component is resolved per open. The walk is depth-first and holds one file descriptor per level of depth, so
+a tree needs `ulimit -n` above its depth. Elsewhere the walk is emulated with path-based enumeration. It is single-threaded;
+stat parallelism (below) still applies within each batch.
+
 ### Size and modification time
 
 Ask for stat fields when you enumerate batch buffers:
@@ -105,6 +127,6 @@ On macOS the gain is mostly allocations.
 
 ## Status
 
-- Directory listing plus size / mtime (`statx` on Linux). No recursive walk yet.
+- Directory listing plus size / mtime (`statx` on Linux). Single-threaded recursive walk.
 - 64-bit only. Targets net8.0 and net10.0.
 - CI builds and checks entry counts on Linux (x64, arm64), macOS and Windows. musl (Alpine) was verified manually on arm64 only.
