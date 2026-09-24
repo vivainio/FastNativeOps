@@ -196,3 +196,68 @@ public class WalkTests(TreeFixture fx) : IClassFixture<TreeFixture>
         }
     }
 }
+
+[CollectionDefinition("NoParallel", DisableParallelization = true)]
+public class NoParallelCollection;
+
+[Collection("NoParallel")]
+public partial class FdLimitTests
+{
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RLimit { public ulong Cur, Max; }
+
+    [DllImport("libc", SetLastError = true)] private static extern int getrlimit(int resource, out RLimit rlim);
+    [DllImport("libc", SetLastError = true)] private static extern int setrlimit(int resource, ref RLimit rlim);
+    private const int RLIMIT_NOFILE = 7;   // Linux
+
+    private static void MakeFullBinaryTree(string path, int depth)
+    {
+        Directory.CreateDirectory(path);
+        if (depth == 0) return;
+        MakeFullBinaryTree(Path.Combine(path, "l"), depth - 1);
+        MakeFullBinaryTree(Path.Combine(path, "r"), depth - 1);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Walk_RunningOutOfFileDescriptors_Throws_NeverSilentlySkips(bool ignoreInaccessible)
+    {
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture is not (Architecture.X64 or Architecture.Arm64)) return;
+
+        var dir = Path.Combine(Path.GetTempPath(), "fno-fd-" + Guid.NewGuid().ToString("N"));
+        MakeFullBinaryTree(dir, 10);      // every directory keeps its fd while its first child is walked: ~10 fds in use
+        getrlimit(RLIMIT_NOFILE, out var original);
+        try
+        {
+            int open = Directory.GetFileSystemEntries("/proc/self/fd").Length;
+            var low = new RLimit { Cur = (ulong)open + 4, Max = original.Max };
+            if (setrlimit(RLIMIT_NOFILE, ref low) != 0) return;                 // not allowed here
+
+            var ex = Assert.ThrowsAny<IOException>(() =>
+            {
+                foreach (var _ in FastDirectory.WalkBatchBuffers(dir, 10, new WalkOptions { IgnoreInaccessible = ignoreInaccessible })) { }
+            });
+            Assert.Contains("errno 24", ex.Message);
+        }
+        finally
+        {
+            setrlimit(RLIMIT_NOFILE, ref original);
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Walk_BinaryTree_WithEnoughDescriptors_ListsEverything()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "fno-bt-" + Guid.NewGuid().ToString("N"));
+        MakeFullBinaryTree(dir, 10);
+        try
+        {
+            int n = 0;
+            foreach (var b in FastDirectory.WalkBatchBuffers(dir, 10)) n += b.Count;
+            Assert.Equal((1 << 11) - 2, n);          // 2 + 4 + ... + 2^10 directories below the root
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+}

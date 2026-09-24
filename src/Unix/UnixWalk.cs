@@ -12,7 +12,7 @@ internal static unsafe partial class UnixDirectory
     private static partial int close(int fd);
 
     private const int AT_FDCWD = -100, O_CLOEXEC = 0x80000;
-    private const int ENOENT = 2, ENOTDIR = 20, ELOOP = 40;
+    private const int ENOENT = 2, ENOTDIR = 20, ELOOP = 40, ENFILE = 23, EMFILE = 24;
 
     // O_DIRECTORY / O_NOFOLLOW differ between x86 and the generic (arm64) ABI.
     private static readonly int ODirectory = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? 0x4000 : 0x10000;
@@ -20,7 +20,7 @@ internal static unsafe partial class UnixDirectory
 
     private sealed class WalkFrame(int fd, string path, int depth)
     {
-        public readonly int Fd = fd;
+        public int Fd = fd;                      // -1 once closed early
         public readonly string Path = path;
         public readonly int Depth = depth;
         public bool Read;
@@ -96,20 +96,32 @@ internal static unsafe partial class UnixDirectory
                     {
                         int errno = Marshal.GetLastPInvokeError();
                         if (errno is ENOENT or ENOTDIR or ELOOP) continue;   // removed or replaced since it was listed
+                        if (errno is EMFILE or ENFILE)                        // never silently drop subtrees for this
+                            throw new IOException($"Too many open files while opening '{Path.Join(f.Path, name)}' " +
+                                                  $"(errno {errno}); the walk needs file descriptors for the directories above it that still have unvisited subdirectories. Raise ulimit -n.");
                         if (o.IgnoreInaccessible) continue;
                         throw new IOException($"Cannot open '{Path.Join(f.Path, name)}' (errno {errno})");
                     }
                     stack.Push(new WalkFrame(child, Path.Join(f.Path, name), f.Depth + 1));
+                    if (f.Next >= f.Subdirs.Count)      // last subdirectory taken: this directory's fd is no longer needed
+                    {
+                        close(f.Fd);
+                        f.Fd = -1;
+                    }
                     continue;
                 }
 
-                close(f.Fd);
+                if (f.Fd >= 0) close(f.Fd);
                 stack.Pop();
             }
         }
         finally
         {
-            while (stack.Count > 0) close(stack.Pop().Fd);
+            while (stack.Count > 0)
+            {
+                int fd = stack.Pop().Fd;
+                if (fd >= 0) close(fd);
+            }
             ArrayPool<byte>.Shared.Return(buf);
         }
     }

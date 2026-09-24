@@ -65,8 +65,9 @@ foreach (DirectoryBatch batch in FastDirectory.WalkBatchBuffers("/mnt/data", 100
 Each batch holds entries from a single directory (`DirectoryPath`, `Depth`); order is unspecified; symbolic links are
 reported but never followed, so link loops cannot occur. On Linux x64/arm64 every subdirectory is opened with `openat`
 relative to its parent's file descriptor, so there is no path length limit (trees deeper than `PATH_MAX` work) and only
-one path component is resolved per open. The walk is depth-first and holds one file descriptor per level of depth, so
-a tree needs `ulimit -n` above its depth. Elsewhere the walk is emulated with path-based enumeration. It is single-threaded;
+one path component is resolved per open. The walk is depth-first and keeps a file descriptor open only for directories that still have unvisited
+subdirectories (a plain deep chain needs O(1), a tree that branches at every level needs one per level), so only extremely
+deep, heavily branching trees can exceed `ulimit -n`; then it throws `IOException` (errno 24) and never silently skips. Elsewhere the walk is emulated with path-based enumeration. It is single-threaded;
 stat parallelism (below) still applies within each batch.
 
 ### Size and modification time
