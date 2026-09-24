@@ -31,6 +31,20 @@ internal static unsafe partial class UnixDirectory
             _ => 0,
         };
 
+    [LibraryImport(Lib, EntryPoint = "syscall", SetLastError = true)]
+    private static partial nint syscallStatx(nint number, int dirfd, byte* path, int flags, uint mask, byte* buf);
+
+    private static readonly int SysStatx =
+        !OperatingSystem.IsLinux() ? 0 :
+        RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => 332,
+            Architecture.Arm64 => 291,
+            _ => 0,
+        };
+
+    private static volatile bool s_statxUnavailable;
+
     private const int EINTR = 4;
 
     private const string Lib = "FastNativeOpsLibc";
@@ -173,14 +187,69 @@ internal static unsafe partial class UnixDirectory
         return pos;
     }
 
+    private const int AT_SYMLINK_NOFOLLOW = 0x100, AT_STATX_DONT_SYNC = 0x4000;
+    private const uint STATX_MTIME = 0x40, STATX_SIZE = 0x200;
+    private const int ENOSYS = 38, EPERM = 1;
+
+    /// <summary>
+    /// Fills size/mtime for every entry in the batch with statx(dirfd, name, ...), relative to the open directory fd.
+    /// With <paramref name="allowStale"/>, AT_STATX_DONT_SYNC lets the kernel answer from cached attributes
+    /// (on NFS: the attributes READDIRPLUS already delivered) instead of a server round trip per file.
+    /// </summary>
+    internal static void StatBatch(int fd, string dir, DirectoryBatch batch, bool allowStale)
+    {
+        if (SysStatx == 0 || s_statxUnavailable)
+        {
+            StatEmulation.Fill(dir, batch);
+            return;
+        }
+        uint mask = ((batch.Fields & StatFields.Size) != 0 ? STATX_SIZE : 0)
+                  | ((batch.Fields & StatFields.ModifiedTime) != 0 ? STATX_MTIME : 0);
+        int flags = AT_SYMLINK_NOFOLLOW | (allowStale ? AT_STATX_DONT_SYNC : 0);
+        byte* sx = stackalloc byte[256];
+        var names = batch.NamesBuffer;
+
+        for (int i = 0; i < batch.Count; i++)
+        {
+            nint r;
+            fixed (byte* np = names)
+                r = syscallStatx(SysStatx, fd, np + batch.NameOffset(i), flags, mask, sx);
+
+            if (r < 0)
+            {
+                int errno = Marshal.GetLastPInvokeError();
+                if (errno is ENOSYS or EPERM)      // old kernel, or blocked by a seccomp profile
+                {
+                    s_statxUnavailable = true;
+                    StatEmulation.Fill(dir, batch, i);
+                    return;
+                }
+                batch.SetStat(i, -1, DateTime.MinValue.Ticks);   // e.g. ENOENT: vanished since listing
+                continue;
+            }
+            // struct statx: mask@0 size@40 mtime{sec@112, nsec@120}
+            uint got = *(uint*)sx;
+            if ((got & mask) != mask)                // filesystem didn't provide it: fall back for this entry
+            {
+                StatEmulation.FillOne(dir, batch, i);
+                continue;
+            }
+            long size = (long)*(ulong*)(sx + 40);
+            long sec = *(long*)(sx + 112);
+            uint nsec = *(uint*)(sx + 120);
+            batch.SetStat(i, size, DateTime.UnixEpoch.Ticks + sec * TimeSpan.TicksPerSecond + nsec / 100);
+        }
+    }
+
     /// <summary>Zero-allocation batches straight from the kernel's getdents64 buffer. The same batch is reused.</summary>
-    internal static IEnumerable<DirectoryBatch> EnumerateGetdentsBatches(string path, int batchSize)
+    internal static IEnumerable<DirectoryBatch> EnumerateGetdentsBatches(
+        string path, int batchSize, StatFields fields, bool allowStale)
     {
         nint dir = opendir(path);
         if (dir == 0)
             throw new IOException($"Cannot open '{path}' (errno {Marshal.GetLastPInvokeError()})");
         var buf = ArrayPool<byte>.Shared.Rent(64 * 1024);
-        var batch = new DirectoryBatch(batchSize);
+        var batch = new DirectoryBatch(batchSize, fields);
         try
         {
             int fd = dirfd(dir), pos = 0, n = 0;
@@ -201,11 +270,16 @@ internal static unsafe partial class UnixDirectory
                 pos = FillBatch(buf, pos, n, batch, path);
                 if (batch.Count == batch.Capacity)
                 {
+                    if (fields != StatFields.None) StatBatch(fd, path, batch, allowStale);
                     yield return batch;
                     batch.Clear();
                 }
             }
-            if (batch.Count > 0) yield return batch;
+            if (batch.Count > 0)
+            {
+                if (fields != StatFields.None) StatBatch(fd, path, batch, allowStale);
+                yield return batch;
+            }
         }
         finally
         {

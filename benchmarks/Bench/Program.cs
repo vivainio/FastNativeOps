@@ -87,4 +87,31 @@ public class ListBench
                 n += b.GetNameUtf8(i).Length > 0 ? 1 : 0;   // touch the name without allocating
         return n;
     }
+
+    // ---- listing + size/mtime for every entry ----
+
+    [Benchmark]
+    public long SystemIO_EnumerateFileSystemInfos_SizeMtime()
+    {
+        long n = 0;
+        foreach (var fi in new DirectoryInfo(_dir).EnumerateFileSystemInfos())
+            n += (fi is FileInfo f ? f.Length : 0) + fi.LastWriteTimeUtc.Ticks % 2;
+        return n;
+    }
+
+    [Benchmark]
+    public long Fast_BatchBuffers_1000_Stat() => StatSum(allowCached: false);
+
+    [Benchmark]
+    public long Fast_BatchBuffers_1000_StatCached() => StatSum(allowCached: true);
+
+    private long StatSum(bool allowCached)
+    {
+        long n = 0;
+        foreach (var b in FastDirectory.EnumerateBatchBuffers(
+                     _dir, 1000, NativeBackend.Auto, StatFields.Size | StatFields.ModifiedTime, allowCached))
+            for (int i = 0; i < b.Count; i++)
+                n += b.GetSize(i) + b.GetModifiedTimeUtc(i).Ticks % 2;
+        return n;
+    }
 }

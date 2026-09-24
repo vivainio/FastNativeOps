@@ -1,17 +1,30 @@
 using FastNativeOps;
 
-// usage: ls-sample [dir] [batchSize] [Auto|Readdir|Getdents64] [buf]
+// usage: ls-sample [dir] [batchSize] [Auto|Readdir|Getdents64] [buf] [stat] [cached]
 var dir = args.Length > 0 ? args[0] : ".";
 var backend = args.Length > 2 && Enum.TryParse<NativeBackend>(args[2], true, out var b) ? b : NativeBackend.Auto;
-bool buf = args.Length > 3 && args[3] == "buf";
+bool buf = args.Contains("buf"), stat = args.Contains("stat"), cached = args.Contains("cached");
+
+if (args.Contains("diag"))
+{
+    // Did the statx fast path stay enabled (false = statx never had to fall back)?
+    var t = typeof(FastDirectory).Assembly.GetType("FastNativeOps.Unix.UnixDirectory");
+    var f = t?.GetField("s_statxUnavailable", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+    foreach (var batch in FastDirectory.EnumerateBatchBuffers(dir, 100, backend, StatFields.Size, cached)) { }
+    Console.WriteLine($"statxUnavailable={f?.GetValue(null)}");
+    return;
+}
 
 if (args.Length > 1 && int.TryParse(args[1], out var n) && n > 0)
 {
     if (buf)
     {
-        foreach (var batch in FastDirectory.EnumerateBatchBuffers(dir, n, backend))
+        var fields = stat ? StatFields.Size | StatFields.ModifiedTime : StatFields.None;
+        foreach (var batch in FastDirectory.EnumerateBatchBuffers(dir, n, backend, fields, cached))
             for (int i = 0; i < batch.Count; i++)
-                Console.WriteLine($"{batch.GetType(i),-13} {batch.GetName(i)}");
+                Console.WriteLine(stat
+                    ? $"{batch.GetType(i),-13} {batch.GetName(i)} {batch.GetSize(i)} {new DateTimeOffset(batch.GetModifiedTimeUtc(i)).ToUnixTimeSeconds()}"
+                    : $"{batch.GetType(i),-13} {batch.GetName(i)}");
         return;
     }
     foreach (var batch in FastDirectory.EnumerateBatches(dir, n, backend))

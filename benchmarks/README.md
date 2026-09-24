@@ -36,6 +36,14 @@ The test directory (plus 100 subdirectories) is created before the run and delet
 | `Fast_Batches_1000` | `EnumerateBatches`, batches of 1000 |
 | `Fast_BatchBuffers_1000` | `EnumerateBatchBuffers`, batches of 1000, reading name spans without allocating |
 
+| `SystemIO_EnumerateFileSystemInfos_SizeMtime` | `DirectoryInfo.EnumerateFileSystemInfos` reading Length and LastWriteTime |
+| `Fast_BatchBuffers_1000_Stat` | batch buffers plus size and mtime via `statx` (synced) |
+| `Fast_BatchBuffers_1000_StatCached` | same with `allowCachedAttributes: true` (`AT_STATX_DONT_SYNC`) |
+
+**On NFS**, set `FASTNATIVEOPS_BENCH_DIR` to a directory on the mount: the stat benchmarks are where the difference shows.
+(The first iteration of a cold cache is slower; BenchmarkDotNet warm-up mostly hides this, so also try a fresh mount or
+`echo 3 > /proc/sys/vm/drop_caches` between runs if you care about cold-cache behaviour.)
+
 Please share your results (the markdown table plus the `BenchmarkDotNet` header lines with OS and CPU) in an issue.
 
 ## Sample results (short job, 50,000 files)

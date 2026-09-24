@@ -47,6 +47,25 @@ Do not keep the batch or its spans past the next iteration (`batch.ToArray()` co
 Linux x64/arm64 (`getdents64`); on other platforms it is emulated by copying names into the same buffer, so the API is
 identical but the allocation savings are smaller.
 
+### Size and modification time
+
+Ask for stat fields when you enumerate batch buffers:
+
+```csharp
+var fields = StatFields.Size | StatFields.ModifiedTime;
+foreach (DirectoryBatch batch in FastDirectory.EnumerateBatchBuffers(path, 1000, fields: fields, allowCachedAttributes: true))
+    for (int i = 0; i < batch.Count; i++)
+        Console.WriteLine($"{batch.GetName(i)} {batch.GetSize(i)} {batch.GetModifiedTimeUtc(i):O}");
+```
+
+On Linux x64/arm64 this calls `statx` relative to the directory fd, requesting only the fields you asked for. With
+`allowCachedAttributes: true` it passes `AT_STATX_DONT_SYNC`, so the kernel may answer from its attribute cache. On NFS
+that means the attributes already delivered by READDIRPLUS are used instead of one server round trip per file, at the
+price of possibly slightly stale values (subject to the mount's `acregmin`/`acdirmin` settings). Without the flag,
+values are revalidated like a normal `stat`. `GetSize` returns -1 and `GetModifiedTimeUtc` returns `DateTime.MinValue`
+for an entry that vanished after it was listed. On other platforms (and if `statx` is blocked, e.g. by a seccomp
+profile) it falls back to `System.IO`, which is slower.
+
 ### Choosing a backend
 
 `NativeBackend.Auto` (default) picks the best backend for the platform. Force one with:
@@ -66,6 +85,6 @@ On macOS the gain is mostly allocations.
 
 ## Status
 
-- Directory listing only (no size / mtime yet).
+- Directory listing plus size / mtime (`statx` on Linux). No recursive walk yet.
 - 64-bit only. Targets net8.0 and net10.0.
 - CI builds and checks entry counts on Linux (x64, arm64), macOS and Windows. musl (Alpine) was verified manually on arm64 only.

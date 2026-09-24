@@ -48,30 +48,41 @@ public static class FastDirectory
     /// Like <see cref="EnumerateBatches"/> but yields one reused <see cref="DirectoryBatch"/> holding UTF-8 names,
     /// avoiding per-entry string and per-batch array allocations. Fastest on Linux x64/arm64 (getdents64);
     /// other platforms emulate it by copying names into the same buffer. Do not keep the batch past the next iteration.
+    /// <para>Pass <paramref name="fields"/> to also get size / mtime. On Linux this uses statx relative to the
+    /// directory fd; with <paramref name="allowCachedAttributes"/> it may answer from the kernel's attribute cache
+    /// (AT_STATX_DONT_SYNC), which avoids per-file server round trips on NFS at the price of possibly stale values.
+    /// Elsewhere it is emulated with System.IO (slower).</para>
     /// </summary>
     public static IEnumerable<DirectoryBatch> EnumerateBatchBuffers(
-        string path, int batchSize, NativeBackend backend = NativeBackend.Auto)
+        string path, int batchSize, NativeBackend backend = NativeBackend.Auto,
+        StatFields fields = StatFields.None, bool allowCachedAttributes = false)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
         if (!OperatingSystem.IsWindows() && Unix.UnixDirectory.UsesGetdents(backend))
-            return Unix.UnixDirectory.EnumerateGetdentsBatches(path, batchSize);
-        return EmulatedBatchBuffers(path, batchSize, backend);
+            return Unix.UnixDirectory.EnumerateGetdentsBatches(path, batchSize, fields, allowCachedAttributes);
+        return EmulatedBatchBuffers(path, batchSize, backend, fields);
     }
 
-    private static IEnumerable<DirectoryBatch> EmulatedBatchBuffers(string path, int batchSize, NativeBackend backend)
+    private static IEnumerable<DirectoryBatch> EmulatedBatchBuffers(
+        string path, int batchSize, NativeBackend backend, StatFields fields)
     {
-        var batch = new DirectoryBatch(batchSize);
+        var batch = new DirectoryBatch(batchSize, fields);
         foreach (var e in Enumerate(path, backend))
         {
             batch.Add(e.Name, e.Type);
             if (batch.Count == batchSize)
             {
+                if (fields != StatFields.None) StatEmulation.Fill(path, batch);
                 yield return batch;
                 batch.Clear();
             }
         }
-        if (batch.Count > 0) yield return batch;
+        if (batch.Count > 0)
+        {
+            if (fields != StatFields.None) StatEmulation.Fill(path, batch);
+            yield return batch;
+        }
     }
 
     public static List<FileEntry> List(string path) => Enumerate(path).ToList();
