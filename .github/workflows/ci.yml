@@ -37,7 +37,11 @@ jobs:
           done
 
   alpine:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
     container: mcr.microsoft.com/dotnet/sdk:10.0-alpine
     steps:
       - uses: actions/checkout@v7
