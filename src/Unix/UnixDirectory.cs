@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 
 namespace FastNativeOps.Unix;
@@ -196,60 +197,148 @@ internal static unsafe partial class UnixDirectory
     /// With <paramref name="allowStale"/>, AT_STATX_DONT_SYNC lets the kernel answer from cached attributes
     /// (on NFS: the attributes READDIRPLUS already delivered) instead of a server round trip per file.
     /// </summary>
-    internal static void StatBatch(int fd, string dir, DirectoryBatch batch, bool allowStale)
+    internal static void StatBatch(int fd, string dir, DirectoryBatch batch, bool allowStale, int helpers)
     {
-        if (SysStatx == 0 || s_statxUnavailable)
-        {
-            StatEmulation.Fill(dir, batch);
-            return;
-        }
+        if (helpers > 0 && batch.Count > 1) { StatWorkers.Run(fd, dir, batch, allowStale, helpers); return; }
+        byte* sx = stackalloc byte[256];
+        for (int i = 0; i < batch.Count; i++) StatOne(fd, dir, batch, i, allowStale, sx);
+    }
+
+    // Thread-safe: writes only entry i of the batch; sx is a per-thread 256-byte scratch buffer.
+    private static void StatOne(int fd, string dir, DirectoryBatch batch, int i, bool allowStale, byte* sx)
+    {
+        if (SysStatx == 0 || s_statxUnavailable) { StatEmulation.FillOne(dir, batch, i); return; }
+
         uint mask = ((batch.Fields & StatFields.Size) != 0 ? STATX_SIZE : 0)
                   | ((batch.Fields & StatFields.ModifiedTime) != 0 ? STATX_MTIME : 0);
         int flags = AT_SYMLINK_NOFOLLOW | (allowStale ? AT_STATX_DONT_SYNC : 0);
-        byte* sx = stackalloc byte[256];
-        var names = batch.NamesBuffer;
 
-        for (int i = 0; i < batch.Count; i++)
+        nint r;
+        fixed (byte* np = batch.NamesBuffer)
+            r = syscallStatx(SysStatx, fd, np + batch.NameOffset(i), flags, mask, sx);
+
+        if (r < 0)
         {
-            nint r;
-            fixed (byte* np = names)
-                r = syscallStatx(SysStatx, fd, np + batch.NameOffset(i), flags, mask, sx);
-
-            if (r < 0)
+            int errno = Marshal.GetLastPInvokeError();
+            if (errno is ENOSYS or EPERM)      // old kernel, or blocked by a seccomp profile
             {
-                int errno = Marshal.GetLastPInvokeError();
-                if (errno is ENOSYS or EPERM)      // old kernel, or blocked by a seccomp profile
-                {
-                    s_statxUnavailable = true;
-                    StatEmulation.Fill(dir, batch, i);
-                    return;
-                }
-                batch.SetStat(i, -1, DateTime.MinValue.Ticks);   // e.g. ENOENT: vanished since listing
-                continue;
-            }
-            // struct statx: mask@0 size@40 mtime{sec@112, nsec@120}
-            uint got = *(uint*)sx;
-            if ((got & mask) != mask)                // filesystem didn't provide it: fall back for this entry
-            {
+                s_statxUnavailable = true;
                 StatEmulation.FillOne(dir, batch, i);
-                continue;
             }
-            long size = (long)*(ulong*)(sx + 40);
-            long sec = *(long*)(sx + 112);
-            uint nsec = *(uint*)(sx + 120);
-            batch.SetStat(i, size, DateTime.UnixEpoch.Ticks + sec * TimeSpan.TicksPerSecond + nsec / 100);
+            else batch.SetStat(i, -1, DateTime.MinValue.Ticks);   // e.g. ENOENT: vanished since listing
+            return;
+        }
+        // struct statx: mask@0 size@40 mtime{sec@112, nsec@120}
+        if ((*(uint*)sx & mask) != mask)         // filesystem didn't provide it: fall back for this entry
+        {
+            StatEmulation.FillOne(dir, batch, i);
+            return;
+        }
+        long size = (long)*(ulong*)(sx + 40);
+        long sec = *(long*)(sx + 112);
+        uint nsec = *(uint*)(sx + 120);
+        batch.SetStat(i, size, DateTime.UnixEpoch.Ticks + sec * TimeSpan.TicksPerSecond + nsec / 100);
+    }
+
+    /// <summary>
+    /// Process-wide pool of dedicated worker threads for parallel statx. Enumerations submit a <see cref="Job"/> and
+    /// the calling thread works on it too, so correctness never depends on the workers being available.
+    /// </summary>
+    internal sealed class StatWorkers
+    {
+        private const int Chunk = 4;
+        private static readonly object s_lock = new();
+        private static StatWorkers? s_current;
+
+        private readonly ConcurrentQueue<Job> _tickets = new();
+        private readonly SemaphoreSlim _signal = new(0);
+        private volatile bool _retired;
+
+        public int Size { get; }
+
+        private StatWorkers(int size)
+        {
+            Size = size;
+            for (int i = 0; i < size; i++)
+                new Thread(Worker) { IsBackground = true, Name = "FastNativeOps.Stat" }.Start();
+        }
+
+        private static StatWorkers Get()
+        {
+            int desired = FastNativeOptions.StatWorkerThreads;
+            var c = s_current;
+            if (c is not null && c.Size == desired) return c;
+            lock (s_lock)
+            {
+                c = s_current;
+                if (c is null || c.Size != desired)
+                {
+                    c?.Retire();               // in-flight jobs still finish: their callers work on them too
+                    s_current = c = new StatWorkers(desired);
+                }
+                return c;
+            }
+        }
+
+        private void Retire()
+        {
+            _retired = true;
+            _signal.Release(Size);
+        }
+
+        private void Worker()
+        {
+            while (true)
+            {
+                _signal.Wait();
+                if (_retired) return;
+                if (_tickets.TryDequeue(out var job)) job.Work();
+            }
+        }
+
+        /// <summary>Stats every entry of the batch using up to <paramref name="helpers"/> pool threads plus the caller.</summary>
+        public static void Run(int fd, string dir, DirectoryBatch batch, bool allowStale, int helpers)
+        {
+            var pool = Get();
+            var job = new Job(fd, dir, batch, allowStale);
+            helpers = Math.Min(helpers, Math.Min(pool.Size, (batch.Count + Chunk - 1) / Chunk - 1));
+            for (int i = 0; i < helpers; i++) pool._tickets.Enqueue(job);
+            if (helpers > 0) pool._signal.Release(helpers);
+            job.Work();
+            job.Done.Wait();
+        }
+
+        internal sealed class Job(int fd, string dir, DirectoryBatch batch, bool allowStale)
+        {
+            private int _next, _completed;
+            public readonly ManualResetEventSlim Done = new(false);
+
+            public void Work()
+            {
+                byte* sx = stackalloc byte[256];
+                int count = batch.Count;
+                while (true)
+                {
+                    int i = Interlocked.Add(ref _next, Chunk) - Chunk;
+                    if (i >= count) return;          // (a stale ticket for a finished job ends up here)
+                    int end = Math.Min(i + Chunk, count);
+                    for (int j = i; j < end; j++) StatOne(fd, dir, batch, j, allowStale, sx);
+                    if (Interlocked.Add(ref _completed, end - i) == count) Done.Set();
+                }
+            }
         }
     }
 
     /// <summary>Zero-allocation batches straight from the kernel's getdents64 buffer. The same batch is reused.</summary>
     internal static IEnumerable<DirectoryBatch> EnumerateGetdentsBatches(
-        string path, int batchSize, StatFields fields, bool allowStale)
+        string path, int batchSize, StatFields fields, bool allowStale, int parallelism)
     {
         nint dir = opendir(path);
         if (dir == 0)
             throw new IOException($"Cannot open '{path}' (errno {Marshal.GetLastPInvokeError()})");
         var buf = ArrayPool<byte>.Shared.Rent(64 * 1024);
         var batch = new DirectoryBatch(batchSize, fields);
+        int minEntries = FastNativeOptions.StatParallelMinEntries;
         try
         {
             int fd = dirfd(dir), pos = 0, n = 0;
@@ -270,14 +359,20 @@ internal static unsafe partial class UnixDirectory
                 pos = FillBatch(buf, pos, n, batch, path);
                 if (batch.Count == batch.Capacity)
                 {
-                    if (fields != StatFields.None) StatBatch(fd, path, batch, allowStale);
+                    if (fields != StatFields.None)
+                    {
+                        StatBatch(fd, path, batch, allowStale, batch.Count >= minEntries ? parallelism - 1 : 0);
+                    }
                     yield return batch;
                     batch.Clear();
                 }
             }
             if (batch.Count > 0)
             {
-                if (fields != StatFields.None) StatBatch(fd, path, batch, allowStale);
+                if (fields != StatFields.None)
+                {
+                    StatBatch(fd, path, batch, allowStale, batch.Count >= minEntries ? parallelism - 1 : 0);
+                }
                 yield return batch;
             }
         }

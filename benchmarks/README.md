@@ -39,6 +39,8 @@ The test directory (plus 100 subdirectories) is created before the run and delet
 | `SystemIO_EnumerateFileSystemInfos_SizeMtime` | `DirectoryInfo.EnumerateFileSystemInfos` reading Length and LastWriteTime |
 | `Fast_BatchBuffers_1000_Stat` | batch buffers plus size and mtime via `statx` (synced) |
 | `Fast_BatchBuffers_1000_StatCached` | same with `allowCachedAttributes: true` (`AT_STATX_DONT_SYNC`) |
+| `Fast_BatchBuffers_1000_Stat_Par8` / `_Par32` | synced stat with 8 / 32 concurrent stat calls |
+| `Fast_BatchBuffers_1000_StatCached_Par8` | cached attributes plus 8 concurrent stat calls |
 
 **On NFS**, set `FASTNATIVEOPS_BENCH_DIR` to a directory on the mount: the stat benchmarks are where the difference shows.
 (The first iteration of a cold cache is slower; BenchmarkDotNet warm-up mostly hides this, so also try a fresh mount or

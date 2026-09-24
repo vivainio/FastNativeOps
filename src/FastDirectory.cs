@@ -52,20 +52,24 @@ public static class FastDirectory
     /// directory fd; with <paramref name="allowCachedAttributes"/> it may answer from the kernel's attribute cache
     /// (AT_STATX_DONT_SYNC), which avoids per-file server round trips on NFS at the price of possibly stale values.
     /// Elsewhere it is emulated with System.IO (slower).</para>
+    /// <para><paramref name="statParallelism"/> sets how many stat calls run concurrently (0 = use
+    /// <see cref="FastNativeOptions.StatParallelism"/>); it mainly helps on high-latency filesystems such as NFS.</para>
     /// </summary>
     public static IEnumerable<DirectoryBatch> EnumerateBatchBuffers(
         string path, int batchSize, NativeBackend backend = NativeBackend.Auto,
-        StatFields fields = StatFields.None, bool allowCachedAttributes = false)
+        StatFields fields = StatFields.None, bool allowCachedAttributes = false, int statParallelism = 0)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
+        ArgumentOutOfRangeException.ThrowIfNegative(statParallelism);
+        int par = statParallelism == 0 ? FastNativeOptions.StatParallelism : statParallelism;
         if (!OperatingSystem.IsWindows() && Unix.UnixDirectory.UsesGetdents(backend))
-            return Unix.UnixDirectory.EnumerateGetdentsBatches(path, batchSize, fields, allowCachedAttributes);
-        return EmulatedBatchBuffers(path, batchSize, backend, fields);
+            return Unix.UnixDirectory.EnumerateGetdentsBatches(path, batchSize, fields, allowCachedAttributes, par);
+        return EmulatedBatchBuffers(path, batchSize, backend, fields, par);
     }
 
     private static IEnumerable<DirectoryBatch> EmulatedBatchBuffers(
-        string path, int batchSize, NativeBackend backend, StatFields fields)
+        string path, int batchSize, NativeBackend backend, StatFields fields, int parallelism)
     {
         var batch = new DirectoryBatch(batchSize, fields);
         foreach (var e in Enumerate(path, backend))
@@ -73,14 +77,14 @@ public static class FastDirectory
             batch.Add(e.Name, e.Type);
             if (batch.Count == batchSize)
             {
-                if (fields != StatFields.None) StatEmulation.Fill(path, batch);
+                if (fields != StatFields.None) StatEmulation.Fill(path, batch, batch.Count >= FastNativeOptions.StatParallelMinEntries ? parallelism : 1);
                 yield return batch;
                 batch.Clear();
             }
         }
         if (batch.Count > 0)
         {
-            if (fields != StatFields.None) StatEmulation.Fill(path, batch);
+            if (fields != StatFields.None) StatEmulation.Fill(path, batch, batch.Count >= FastNativeOptions.StatParallelMinEntries ? parallelism : 1);
             yield return batch;
         }
     }

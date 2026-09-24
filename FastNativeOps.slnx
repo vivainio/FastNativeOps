@@ -8,4 +8,7 @@
   <Folder Name="/src/">
     <Project Path="src/FastNativeOps.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FastNativeOps.Tests/FastNativeOps.Tests.csproj" />
+  </Folder>
 </Solution>

@@ -13,9 +13,9 @@ mkdir "$d/sub"
 expected=$(printf '%s' "$expected" | sort)
 modes=("auto" "readdir"); [ "$(uname)" = Linux ] && modes+=("getdents64")
 fail=0
-for be in "${modes[@]}"; do for bs in 1 7 100 1000; do for cached in "" cached; do
-  got=$(dotnet "$dll" "$d" $bs $be buf stat $cached | grep '^File' | sed 's/  */ /g' | sort)
-  if [ "$got" = "$expected" ]; then echo "OK   $be bs=$bs ${cached:-synced}"; else echo "FAIL $be bs=$bs ${cached:-synced}"; fail=1
+for be in "${modes[@]}"; do for bs in 1 7 100 1000; do for cached in "" cached; do for par in 1 8; do for minv in 32 1; do [ "$par" = 1 ] && [ "$minv" = 1 ] && continue
+  got=$(dotnet "$dll" "$d" $bs $be buf stat $cached par=$par min=$minv | grep '^File' | sed 's/  */ /g' | sort)
+  if [ "$got" = "$expected" ]; then echo "OK   $be bs=$bs ${cached:-synced} par=$par min=$minv"; else echo "FAIL $be bs=$bs ${cached:-synced} par=$par min=$minv"; fail=1
     diff <(echo "$expected") <(echo "$got") | head -4; fi
-done; done; done
+done; done; done; done; done
 exit $fail

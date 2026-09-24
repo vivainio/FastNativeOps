@@ -66,6 +66,26 @@ values are revalidated like a normal `stat`. `GetSize` returns -1 and `GetModifi
 for an entry that vanished after it was listed. On other platforms (and if `statx` is blocked, e.g. by a seccomp
 profile) it falls back to `System.IO`, which is slower.
 
+### Parallel stat (NFS and other high-latency filesystems)
+
+Every stat is a syscall, and on NFS a cache miss costs a network round trip. Running several in parallel hides that
+latency. Configure it once at startup with the static `FastNativeOptions` object:
+
+```csharp
+FastNativeOptions.StatWorkerThreads = 16;    // size of the shared worker pool (default 16)
+FastNativeOptions.StatParallelism = 16;      // concurrent stats per enumeration (default 1 = sequential)
+FastNativeOptions.StatParallelMinEntries = 32; // only batches at least this big use the pool (default 32)
+
+// or override the parallelism for a single call
+FastDirectory.EnumerateBatchBuffers(path, 1000, fields: fields, statParallelism: 4);
+```
+
+The worker pool is process-wide and created lazily the first time a parallel stat is needed. It uses dedicated
+threads, because blocking syscalls would starve the .NET thread pool, which also ramps up slowly. All enumerations share
+it, and the calling thread always takes part in its own batch, so a busy pool never causes a hang. Small directories and
+short batches are stat'ed sequentially and never touch the pool. On a fast local filesystem parallelism gives little or
+nothing; measure on your mount with the benchmarks.
+
 ### Choosing a backend
 
 `NativeBackend.Auto` (default) picks the best backend for the platform. Force one with:

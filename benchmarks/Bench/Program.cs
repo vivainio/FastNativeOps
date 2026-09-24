@@ -100,16 +100,25 @@ public class ListBench
     }
 
     [Benchmark]
-    public long Fast_BatchBuffers_1000_Stat() => StatSum(allowCached: false);
+    public long Fast_BatchBuffers_1000_Stat() => StatSum(false, 1);
 
     [Benchmark]
-    public long Fast_BatchBuffers_1000_StatCached() => StatSum(allowCached: true);
+    public long Fast_BatchBuffers_1000_StatCached() => StatSum(true, 1);
 
-    private long StatSum(bool allowCached)
+    [Benchmark]
+    public long Fast_BatchBuffers_1000_Stat_Par8() => StatSum(false, 8);
+
+    [Benchmark]
+    public long Fast_BatchBuffers_1000_Stat_Par32() => StatSum(false, 32);
+
+    [Benchmark]
+    public long Fast_BatchBuffers_1000_StatCached_Par8() => StatSum(true, 8);
+
+    private long StatSum(bool allowCached, int parallelism)
     {
         long n = 0;
         foreach (var b in FastDirectory.EnumerateBatchBuffers(
-                     _dir, 1000, NativeBackend.Auto, StatFields.Size | StatFields.ModifiedTime, allowCached))
+                     _dir, 1000, NativeBackend.Auto, StatFields.Size | StatFields.ModifiedTime, allowCached, parallelism))
             for (int i = 0; i < b.Count; i++)
                 n += b.GetSize(i) + b.GetModifiedTimeUtc(i).Ticks % 2;
         return n;

@@ -27,6 +27,9 @@ jobs:
         run: |
           for f in net8.0 net10.0; do dotnet run -c Release -f $f --no-build --project samples/ls-sample -- . | head -3; done
 
+      - name: Unit tests
+        run: dotnet test tests/FastNativeOps.Tests -c Release
+
       - name: Backend check (Unix)
         if: runner.os != 'Windows'
         shell: bash

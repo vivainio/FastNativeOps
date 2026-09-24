@@ -3,9 +3,13 @@ namespace FastNativeOps;
 /// <summary>Portable (slower) stat via System.IO; used off Linux and as a fallback when statx is unavailable.</summary>
 internal static class StatEmulation
 {
-    public static void Fill(string dir, DirectoryBatch batch, int start = 0)
+    public static void Fill(string dir, DirectoryBatch batch, int parallelism = 1)
     {
-        for (int i = start; i < batch.Count; i++) FillOne(dir, batch, i);
+        if (parallelism > 1 && batch.Count > 1)
+            Parallel.For(0, batch.Count, new ParallelOptions { MaxDegreeOfParallelism = parallelism },
+                i => FillOne(dir, batch, i));
+        else
+            for (int i = 0; i < batch.Count; i++) FillOne(dir, batch, i);
     }
 
     public static void FillOne(string dir, DirectoryBatch batch, int i)
