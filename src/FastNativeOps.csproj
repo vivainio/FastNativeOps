@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
       <PackageId>FastNativeOps</PackageId>
-    <Version>0.0.1</Version>
+    <Version>0.0.3</Version>
     <Authors>vivainio</Authors>
     <Description>Fast file system access for .NET via direct P/Invoke (getdents64 and statx on Linux, readdir on macOS); plain System.IO on Windows.</Description>
     <PackageTags>filesystem;pinvoke;native;directory;performance</PackageTags>
