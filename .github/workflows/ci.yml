@@ -25,13 +25,29 @@ jobs:
       - name: Smoke test
         run: dotnet run -c Release --project samples/ls-sample -- .
 
+      - name: Backend check (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          expected=$(ls -A /usr/bin | wc -l)
+          backends="Readdir"; [ "$RUNNER_OS" = "Linux" ] && backends="Readdir Getdents64"
+          for b in $backends; do
+            got=$(dotnet run -c Release --no-build --project samples/ls-sample -- /usr/bin 0 $b | wc -l)
+            echo "$b: $got (expected $expected)"; [ "$got" = "$expected" ]
+          done
+
   alpine:
     runs-on: ubuntu-latest
     container: mcr.microsoft.com/dotnet/sdk:10.0-alpine
     steps:
       - uses: actions/checkout@v7
-      - name: Smoke test (musl)
-        run: dotnet run -c Release --project samples/ls-sample -- /usr
+      - name: Backend check (musl)
+        run: |
+          expected=$(ls -A /usr/bin | wc -l)
+          for b in Readdir Getdents64; do
+            got=$(dotnet run -c Release --project samples/ls-sample -- /usr/bin 0 $b | wc -l)
+            echo "$b: $got (expected $expected)"; [ "$got" = "$expected" ]
+          done
 
   publish:
     if: github.event_name == 'release'

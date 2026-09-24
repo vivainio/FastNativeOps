@@ -18,4 +18,6 @@ For big directories, get entries in batches:
 foreach (FileEntry[] batch in FastDirectory.EnumerateBatches(path, 1000)) { /* ... */ }
 ```
 
+Backends: `NativeBackend.Auto` (default) uses raw `getdents64` on Linux x64/arm64, `readdir` on other Unix, and `FindFirstFileExW` on Windows. Pass `NativeBackend.Readdir` or `Getdents64` to `Enumerate` / `EnumerateBatches` to force one.
+
 Status: directory listing only. 64-bit only. Tested on macOS arm64, Debian and Alpine (arm64).

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.InteropServices;
 
 namespace FastNativeOps.Unix;
@@ -12,6 +13,25 @@ internal static unsafe partial class UnixDirectory
 
     [LibraryImport(Lib, EntryPoint = "closedir")]
     private static partial int closedir(nint dir);
+
+    [LibraryImport(Lib, EntryPoint = "dirfd")]
+    private static partial int dirfd(nint dir);
+
+    // syscall() is variadic in C, but on Linux x64/arm64 the calling convention matches a fixed signature.
+    [LibraryImport(Lib, EntryPoint = "syscall", SetLastError = true)]
+    private static partial nint syscall(nint number, int fd, byte* buf, nint count);
+
+    // getdents64 syscall numbers (asm-generic table on arm64).
+    private static readonly int SysGetdents64 =
+        !OperatingSystem.IsLinux() ? 0 :
+        RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 => 217,
+            Architecture.Arm64 => 61,
+            _ => 0,
+        };
+
+    private const int EINTR = 4;
 
     private const string Lib = "FastNativeOpsLibc";
 
@@ -61,7 +81,79 @@ internal static unsafe partial class UnixDirectory
         return (Marshal.PtrToStringUTF8((nint)(p + NameOffset))!, p[TypeOffset]);
     }
 
-    public static IEnumerable<FileEntry> Enumerate(string path)
+    private static int GetDents(int fd, byte[] buf)
+    {
+        fixed (byte* p = buf)
+            return (int)syscall(SysGetdents64, fd, p, buf.Length);
+    }
+
+    // linux_dirent64: ino(8) off(8) reclen(2) type(1) name@19 (NUL-terminated). Same on glibc and musl.
+    private static IEnumerable<FileEntry> EnumerateGetdents(string path)
+    {
+        nint dir = opendir(path);
+        if (dir == 0)
+            throw new IOException($"Cannot open '{path}' (errno {Marshal.GetLastPInvokeError()})");
+        var buf = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
+        {
+            int fd = dirfd(dir);
+            while (true)
+            {
+                int n = GetDents(fd, buf);
+                if (n < 0)
+                {
+                    int errno = Marshal.GetLastPInvokeError();
+                    if (errno == EINTR) continue;
+                    throw new IOException($"Cannot read '{path}' (errno {errno})");
+                }
+                if (n == 0) yield break;
+
+                for (int pos = 0; pos < n;)
+                {
+                    var rec = buf.AsSpan(pos);
+                    int reclen = BitConverter.ToUInt16(rec[16..18]);
+                    byte dtype = rec[18];
+                    var nameSpan = rec[19..reclen];
+                    nameSpan = nameSpan[..nameSpan.IndexOf((byte)0)];
+                    pos += reclen;
+
+                    if (nameSpan is [(byte)'.'] or [(byte)'.', (byte)'.']) continue;
+                    var name = System.Text.Encoding.UTF8.GetString(nameSpan);
+                    var type = dtype switch
+                    {
+                        DT_REG => EntryType.File,
+                        DT_DIR => EntryType.Directory,
+                        DT_LNK => EntryType.SymbolicLink,
+                        0 => Probe(path, name),
+                        _ => EntryType.Other,
+                    };
+                    yield return new FileEntry(name, type);
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buf);
+            closedir(dir);
+        }
+    }
+
+    public static IEnumerable<FileEntry> Enumerate(string path, NativeBackend backend)
+    {
+        switch (backend)
+        {
+            case NativeBackend.Readdir:
+                return EnumerateReaddir(path);
+            case NativeBackend.Getdents64:
+                if (SysGetdents64 == 0)
+                    throw new PlatformNotSupportedException("getdents64 is only supported on Linux x64/arm64.");
+                return EnumerateGetdents(path);
+            default:
+                return SysGetdents64 != 0 ? EnumerateGetdents(path) : EnumerateReaddir(path);
+        }
+    }
+
+    private static IEnumerable<FileEntry> EnumerateReaddir(string path)
     {
         nint dir = opendir(path);
         if (dir == 0)
