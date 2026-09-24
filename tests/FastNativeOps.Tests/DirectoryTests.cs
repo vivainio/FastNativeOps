@@ -31,7 +31,7 @@ public class DirectoryTests(TempDirFixture fx) : IClassFixture<TempDirFixture>
     public static IEnumerable<object[]> Backends()
     {
         yield return [NativeBackend.Auto];
-        yield return [NativeBackend.Readdir];
+        if (!OperatingSystem.IsWindows()) yield return [NativeBackend.Readdir];
         if (OperatingSystem.IsLinux() && System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture
             is System.Runtime.InteropServices.Architecture.X64 or System.Runtime.InteropServices.Architecture.Arm64)
             yield return [NativeBackend.Getdents64];
@@ -145,5 +145,25 @@ public class DirectoryTests(TempDirFixture fx) : IClassFixture<TempDirFixture>
             FastNativeOptions.StatWorkerThreads = original;
             FastNativeOptions.StatParallelMinEntries = originalMin;
         }
+    }
+}
+
+public class WindowsLayoutTests
+{
+    [Fact]
+    public void FindData_Layout_MatchesWin32()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        // Regression: names must not be shifted (cFileName must start at offset 44 in WIN32_FIND_DATAW).
+        var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fno-win-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            File.WriteAllText(System.IO.Path.Combine(dir, "abcdef.txt"), "x");
+            var e = Assert.Single(FastDirectory.List(dir));
+            Assert.Equal("abcdef.txt", e.Name);
+            Assert.Equal(EntryType.File, e.Type);
+        }
+        finally { Directory.Delete(dir, true); }
     }
 }

@@ -4,7 +4,9 @@ namespace FastNativeOps.Windows;
 
 internal static partial class WinDirectory
 {
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    // WIN32_FIND_DATAW is declared with 4-byte packing: with the default 8-byte alignment of the FILETIME longs,
+    // cFileName would start 4 bytes late and names come back truncated/garbled.
+    [StructLayout(LayoutKind.Sequential, Pack = 4, CharSet = CharSet.Unicode)]
     private unsafe struct WIN32_FIND_DATAW
     {
         public uint dwFileAttributes;
