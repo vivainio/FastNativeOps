@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/Bench/Bench.csproj" />
+  </Folder>
   <Folder Name="/samples/">
     <Project Path="samples/ls-sample/ls-sample.csproj" />
   </Folder>

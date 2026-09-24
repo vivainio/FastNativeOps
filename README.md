@@ -58,6 +58,12 @@ FastDirectory.EnumerateBatches(path, 1000, NativeBackend.Getdents64);
 
 `Getdents64` is Linux x64/arm64 only; requesting an unsupported backend throws `PlatformNotSupportedException`.
 
+## Benchmarks
+
+See [benchmarks/](benchmarks/README.md); build and run them in your own environment. On Linux arm64 with 50,000 files,
+`EnumerateBatchBuffers` took about 1.3 ms and 37 KB versus 4.2 ms and 8.4 MB for `Directory.EnumerateFileSystemEntries`.
+On macOS the gain is mostly allocations.
+
 ## Status
 
 - Directory listing only (no size / mtime yet).
