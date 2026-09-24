@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/ls-sample/ls-sample.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/FastNativeOps.csproj" />
+  </Folder>
+</Solution>
