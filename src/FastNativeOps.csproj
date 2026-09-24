@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
       <PackageId>FastNativeOps</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.0.1</Version>
     <Authors>vivainio</Authors>
     <Description>Fast cross-platform file system access via direct P/Invoke (opendir/readdir on Linux and macOS, FindFirstFileEx on Windows).</Description>
     <PackageTags>filesystem;pinvoke;native;directory;performance</PackageTags>
