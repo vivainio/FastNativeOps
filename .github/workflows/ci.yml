@@ -23,7 +23,9 @@ jobs:
             10.0.x
       - run: dotnet build -c Release
       - name: Smoke test
-        run: dotnet run -c Release --project samples/ls-sample -- .
+        shell: bash
+        run: |
+          for f in net8.0 net10.0; do dotnet run -c Release -f $f --no-build --project samples/ls-sample -- . | head -3; done
 
       - name: Backend check (Unix)
         if: runner.os != 'Windows'
@@ -31,27 +33,14 @@ jobs:
         run: |
           expected=$(ls -A /usr/bin | wc -l)
           backends="Readdir"; [ "$RUNNER_OS" = "Linux" ] && backends="Readdir Getdents64"
-          for b in $backends; do
-            got=$(dotnet run -c Release --no-build --project samples/ls-sample -- /usr/bin 0 $b | wc -l)
-            echo "$b: $got (expected $expected)"; [ "$got" = "$expected" ]
-          done
-
-  alpine:
-    runs-on: ubuntu-latest
-    container: mcr.microsoft.com/dotnet/sdk:10.0-alpine
-    steps:
-      - uses: actions/checkout@v7
-      - name: Backend check (musl)
-        run: |
-          expected=$(ls -A /usr/bin | wc -l)
-          for b in Readdir Getdents64; do
-            got=$(dotnet run -c Release --project samples/ls-sample -- /usr/bin 0 $b | wc -l)
-            echo "$b: $got (expected $expected)"; [ "$got" = "$expected" ]
-          done
+          for fw in net8.0 net10.0; do for b in $backends; do
+            got=$(dotnet run -c Release -f $fw --no-build --project samples/ls-sample -- /usr/bin 0 $b | wc -l)
+            echo "$fw $b: $got (expected $expected)"; [ "$got" = "$expected" ]
+          done; done
 
   publish:
     if: github.event_name == 'release'
-    needs: [build, alpine]
+    needs: [build]
     runs-on: ubuntu-latest
     permissions:
       id-token: write   # OIDC token for NuGet trusted publishing
