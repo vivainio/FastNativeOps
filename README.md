@@ -6,7 +6,7 @@ Fast cross-platform file system access for .NET using direct P/Invoke.
 |---|---|
 | Linux x64 / arm64 | raw `getdents64` syscall (default), or libc `readdir` |
 | macOS | libc `opendir` / `readdir` |
-| Windows | `FindFirstFileExW` (basic info, large fetch) |
+| Windows | plain `System.IO` (no native code; speed is not a goal there) |
 
 ## Usage
 

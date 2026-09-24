@@ -12,7 +12,7 @@ public static class FastDirectory
         {
             if (backend != NativeBackend.Auto)
                 throw new PlatformNotSupportedException($"Backend {backend} is not available on Windows.");
-            return Windows.WinDirectory.Enumerate(path);
+            return Portable.SystemIODirectory.Enumerate(path);
         }
         return Unix.UnixDirectory.Enumerate(path, backend);
     }
