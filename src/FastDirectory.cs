@@ -110,6 +110,13 @@ public static class FastDirectory
         return WalkEmulated(root, batchSize, options, par);
     }
 
+    private static bool Passes(EntryFilter filter, string name, EntryType type)
+    {
+        Span<byte> utf8 = name.Length <= 256 ? stackalloc byte[768] : new byte[System.Text.Encoding.UTF8.GetMaxByteCount(name.Length)];
+        int n = System.Text.Encoding.UTF8.GetBytes(name, utf8);
+        return filter(utf8[..n], type);
+    }
+
     private static IEnumerable<DirectoryBatch> WalkEmulated(string root, int batchSize, WalkOptions o, int par)
     {
         var batch = new DirectoryBatch(batchSize, o.Fields);
@@ -134,8 +141,9 @@ public static class FastDirectory
                     break;
                 }
                 var entry = it.Current;
+                if (entry.Type == EntryType.Directory && depth < o.MaxDepth) subdirs.Add(entry.Name);   // descend regardless of the filter
+                if (o.EntryFilter is not null && !Passes(o.EntryFilter, entry.Name, entry.Type)) continue;
                 batch.Add(entry.Name, entry.Type);
-                if (entry.Type == EntryType.Directory && depth < o.MaxDepth) subdirs.Add(entry.Name);
                 if (batch.Count == batchSize)
                 {
                     if (o.Fields != StatFields.None) StatEmulation.Fill(path, batch, par);

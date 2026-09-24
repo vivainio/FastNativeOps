@@ -163,7 +163,8 @@ internal static unsafe partial class UnixDirectory
     };
 
     // Parses records from pos until the batch is full or the buffer is consumed; returns the new pos.
-    private static int FillBatch(byte[] buf, int pos, int n, DirectoryBatch batch, string path)
+    private static int FillBatch(byte[] buf, int pos, int n, DirectoryBatch batch, string path,
+        EntryFilter? filter = null, List<string>? subdirs = null)
     {
         while (pos < n && batch.Count < batch.Capacity)
         {
@@ -183,6 +184,8 @@ internal static unsafe partial class UnixDirectory
                 0 => Probe(path, System.Text.Encoding.UTF8.GetString(name)),
                 _ => EntryType.Other,
             };
+            if (type == EntryType.Directory) subdirs?.Add(System.Text.Encoding.UTF8.GetString(name));   // descend regardless of the filter
+            if (filter is not null && !filter(name, type)) continue;
             batch.Add(name, type);
         }
         return pos;

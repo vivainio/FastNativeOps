@@ -123,4 +123,31 @@ public class ListBench
                 n += b.GetSize(i) + b.GetModifiedTimeUtc(i).Ticks % 2;
         return n;
     }
+
+    // ---- recursive walk with stat, with and without a name filter (filter runs before the stat pass) ----
+
+    [Benchmark]
+    public long Fast_Walk_Stat() => WalkSum(null);
+
+    [Benchmark]
+    public long Fast_Walk_Stat_Filtered_10Files() => WalkSum(EntryFilters.Glob("file-00000?.txt"));
+
+    [Benchmark]
+    public long SystemIO_Recursive_FileInfo_Filtered_10Files()
+    {
+        long n = 0;
+        foreach (var fi in new DirectoryInfo(_dir).EnumerateFileSystemInfos("file-00000?.txt", SearchOption.AllDirectories))
+            n += (fi is FileInfo f ? f.Length : 0) + fi.LastWriteTimeUtc.Ticks % 2;
+        return n;
+    }
+
+    private long WalkSum(EntryFilter? filter)
+    {
+        long n = 0;
+        var o = new WalkOptions { Fields = StatFields.Size | StatFields.ModifiedTime, EntryFilter = filter };
+        foreach (var b in FastDirectory.WalkBatchBuffers(_dir, 1000, o))
+            for (int i = 0; i < b.Count; i++)
+                n += b.GetSize(i) + b.GetModifiedTimeUtc(i).Ticks % 2;
+        return n;
+    }
 }

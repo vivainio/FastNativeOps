@@ -9,6 +9,13 @@ public sealed class WalkOptions
     /// <summary>Called for each subdirectory before descending into it: (directory name, its depth). Return false to skip it.</summary>
     public Func<string, int, bool>? ShouldDescend { get; set; }
 
+    /// <summary>
+    /// Decides which entries are reported (see <see cref="EntryFilters"/>). Applied before the stat pass, so entries
+    /// that do not match cost no stat call. It does not affect descent: subdirectories are entered whether or not they
+    /// are reported; use <see cref="ShouldDescend"/> to prune.
+    /// </summary>
+    public EntryFilter? EntryFilter { get; set; }
+
     /// <summary>Skip directories that cannot be opened or read (e.g. permission denied) instead of throwing.</summary>
     public bool IgnoreInaccessible { get; set; }
 

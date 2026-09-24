@@ -68,10 +68,9 @@ internal static unsafe partial class UnixDirectory
                             }
                             if (n == 0) break;
                         }
-                        pos = FillBatch(buf, pos, n, batch, f.Path);
+                        pos = FillBatch(buf, pos, n, batch, f.Path, o.EntryFilter, f.Depth < o.MaxDepth ? (f.Subdirs ??= []) : null);
                         if (batch.Count == batch.Capacity)
                         {
-                            CollectSubdirs(f, batch, o);
                             if (stat) StatBatch(f.Fd, f.Path, batch, o.AllowCachedAttributes, batch.Count >= minEntries ? parallelism - 1 : 0);
                             yield return batch;
                             batch.Clear();
@@ -79,7 +78,6 @@ internal static unsafe partial class UnixDirectory
                     }
                     if (batch.Count > 0)
                     {
-                        CollectSubdirs(f, batch, o);
                         if (stat) StatBatch(f.Fd, f.Path, batch, o.AllowCachedAttributes, batch.Count >= minEntries ? parallelism - 1 : 0);
                         yield return batch;
                         batch.Clear();
@@ -124,13 +122,5 @@ internal static unsafe partial class UnixDirectory
             }
             ArrayPool<byte>.Shared.Return(buf);
         }
-    }
-
-    private static void CollectSubdirs(WalkFrame f, DirectoryBatch batch, WalkOptions o)
-    {
-        if (f.Depth >= o.MaxDepth) return;
-        for (int i = 0; i < batch.Count; i++)
-            if (batch.GetType(i) == EntryType.Directory)
-                (f.Subdirs ??= []).Add(batch.GetName(i));
     }
 }

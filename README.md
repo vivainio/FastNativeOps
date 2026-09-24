@@ -70,6 +70,21 @@ subdirectories (a plain deep chain needs O(1), a tree that branches at every lev
 deep, heavily branching trees can exceed `ulimit -n`; then it throws `IOException` (errno 24) and never silently skips. Elsewhere the walk is emulated with path-based enumeration. It is single-threaded;
 stat parallelism (below) still applies within each batch.
 
+### Filtering a walk
+
+```csharp
+var options = new WalkOptions
+{
+    Fields = StatFields.Size,
+    EntryFilter = EntryFilters.Regex(new Regex(@"^report-\d{4}\.csv$")),   // or Glob("*.csv"), Extension(".cs"), Not/And/Or, or your own
+};
+```
+
+`EntryFilter` receives the UTF-8 name and the entry type, so custom filters allocate nothing (the regex helper decodes
+into a stack buffer). It runs **before** the stat pass: entries that do not match cost no `statx` call, which is where
+the time goes on NFS. It only decides what is *reported*: subdirectories are still entered even when the filter hides
+them; use `ShouldDescend` to prune. Case-insensitive options fold ASCII letters only.
+
 ### Size and modification time
 
 Ask for stat fields when you enumerate batch buffers:

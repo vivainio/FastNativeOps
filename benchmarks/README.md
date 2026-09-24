@@ -42,6 +42,10 @@ The test directory (plus 100 subdirectories) is created before the run and delet
 | `Fast_BatchBuffers_1000_Stat_Par8` / `_Par32` | synced stat with 8 / 32 concurrent stat calls |
 | `Fast_BatchBuffers_1000_StatCached_Par8` | cached attributes plus 8 concurrent stat calls |
 
+| `Fast_Walk_Stat` | recursive walk with size and mtime for every entry |
+| `Fast_Walk_Stat_Filtered_10Files` | same, with `EntryFilters.Glob` keeping 10 files: the filter runs before stat, so the other entries cost no stat call |
+| `SystemIO_Recursive_FileInfo_Filtered_10Files` | `DirectoryInfo.EnumerateFileSystemInfos(pattern, AllDirectories)` for comparison |
+
 **On NFS**, set `FASTNATIVEOPS_BENCH_DIR` to a directory on the mount: the stat benchmarks are where the difference shows.
 (The first iteration of a cold cache is slower; BenchmarkDotNet warm-up mostly hides this, so also try a fresh mount or
 `echo 3 > /proc/sys/vm/drop_caches` between runs if you care about cold-cache behaviour.)
