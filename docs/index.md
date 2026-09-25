@@ -33,9 +33,9 @@ foreach (DirectoryBatch batch in FastDirectory.WalkBatchBuffers("/mnt/data", 100
 
     One reusable buffer of UTF-8 names per batch: close to zero allocations per entry.
 
--   :lucide-ruler: **[Size and mtime](guide/stat.md)**
+-   :lucide-ruler: **[Stat fields](guide/stat.md)**
 
-    `statx` relative to the directory descriptor, optionally from cached attributes, optionally in parallel.
+    Size, times and attributes matching `FileSystemInfo`: one `statx` per entry relative to the directory descriptor, optionally cached, optionally parallel.
 
 -   :lucide-folder-tree: **[Recursive walk](guide/walk.md)**
 

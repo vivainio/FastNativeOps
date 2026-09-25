@@ -101,7 +101,7 @@ foreach (var batch in FastDirectory.EnumerateBatchBuffers(path, 1000, fields: St
 Only `WalkBatchBuffers` and `EnumerateBatchBuffers` take a filter. `Enumerate` and `EnumerateBatches` already give you
 string names, so a LINQ `Where` is just as cheap there.
 
-### Size and modification time
+### Size, times and attributes
 
 Ask for stat fields when you enumerate batch buffers:
 
@@ -119,6 +119,11 @@ price of possibly slightly stale values (subject to the mount's `acregmin`/`acdi
 values are revalidated like a normal `stat`. `GetSize` returns -1 and `GetModifiedTimeUtc` returns `DateTime.MinValue`
 for an entry that vanished after it was listed. On other platforms (and if `statx` is blocked, e.g. by a seccomp
 profile) it falls back to `System.IO`, which is slower.
+
+`StatFields.CreationTime`, `LastAccessTime` and `Attributes` give what `DirectoryInfo.GetFileSystemInfos` reports, from
+the same single `statx` call. As in .NET on Linux, creation time is the older of ctime and mtime, not btime, so it
+works on NFS. Symbolic links are not followed: a link reports `ReparsePoint`, without the `Directory`/`ReadOnly` that
+.NET takes from its target.
 
 ### Parallel stat (NFS and other high-latency filesystems)
 

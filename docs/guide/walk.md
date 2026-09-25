@@ -25,7 +25,7 @@ Each batch holds entries of **one directory**; `DirectoryPath` and `Depth` say w
 | `ShouldDescend(name, depth)` | return `false` to skip a subdirectory (it is still listed) |
 | `EntryFilter` | which entries are reported, see [Filtering](filtering.md) |
 | `IgnoreInaccessible` | skip directories that cannot be opened or read instead of throwing |
-| `Fields`, `AllowCachedAttributes`, `StatParallelism` | stat options, as in [Size and modification time](stat.md) |
+| `Fields`, `AllowCachedAttributes`, `StatParallelism` | stat options, as in [Stat fields](stat.md) |
 | `Backend` | force a [backend](platforms.md) |
 
 ## Symbolic links

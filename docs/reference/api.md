@@ -31,8 +31,8 @@ IEnumerable<DirectoryBatch> WalkBatchBuffers(string root, int batchSize, WalkOpt
 |---|---|
 | `FileEntry` | `readonly record struct FileEntry(string Name, EntryType Type)` |
 | `EntryType` | `Unknown`, `File`, `Directory`, `SymbolicLink`, `Other` |
-| `DirectoryBatch` | reusable batch: `Count`, `GetNameUtf8`, `GetName`, `GetType`, indexer, `ToArray`, `GetSize`, `GetModifiedTimeUtc`, `Fields`, `DirectoryPath`, `Depth` |
-| `StatFields` | flags: `None`, `Size`, `ModifiedTime` |
+| `DirectoryBatch` | reusable batch: `Count`, `GetNameUtf8`, `GetName`, `GetType`, indexer, `ToArray`, `GetSize`, `GetModifiedTimeUtc`, `GetCreationTimeUtc`, `GetLastAccessTimeUtc`, `GetAttributes`, `Fields`, `DirectoryPath`, `Depth` |
+| `StatFields` | flags: `None`, `Size`, `ModifiedTime`, `CreationTime`, `LastAccessTime`, `Attributes` |
 | `NativeBackend` | `Auto`, `Readdir`, `Getdents64` |
 | `WalkOptions` | see [Recursive walk](../guide/walk.md) |
 | `EntryFilter` | `delegate bool EntryFilter(ReadOnlySpan<byte> nameUtf8, EntryType type)` |
@@ -45,5 +45,5 @@ IEnumerable<DirectoryBatch> WalkBatchBuffers(string root, int batchSize, WalkOpt
 |---|---|
 | `IOException` | directory cannot be opened or read (message includes the errno); out of file descriptors during a walk (errno 24) |
 | `PlatformNotSupportedException` | a backend that is not available on this platform was requested explicitly |
-| `InvalidOperationException` | `GetSize` / `GetModifiedTimeUtc` without requesting the field |
+| `InvalidOperationException` | any stat getter without requesting its field |
 | `ArgumentOutOfRangeException` | `batchSize < 1`, negative depth or parallelism |

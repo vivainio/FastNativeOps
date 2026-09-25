@@ -21,7 +21,7 @@ foreach (DirectoryBatch batch in FastDirectory.EnumerateBatchBuffers(path, 1000)
 | `GetType(i)` | `EntryType` |
 | `this[i]` / `ToArray()` | `FileEntry` / copy the batch out |
 | `DirectoryPath`, `Depth` | which directory the entries belong to (see [walk](walk.md)) |
-| `GetSize(i)`, `GetModifiedTimeUtc(i)` | only if requested, see [Size and modification time](stat.md) |
+| `GetSize(i)`, `GetModifiedTimeUtc(i)`, `GetCreationTimeUtc(i)`, `GetLastAccessTimeUtc(i)`, `GetAttributes(i)` | only if requested, see [Stat fields](stat.md) |
 
 ## Filtering before stat
 

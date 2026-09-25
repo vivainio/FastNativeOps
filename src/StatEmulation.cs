@@ -14,18 +14,22 @@ internal static class StatEmulation
 
     public static void FillOne(string dir, DirectoryBatch batch, int i)
     {
-        long size = -1, mtime = DateTime.MinValue.Ticks;
+        var s = EntryStat.Missing;
         try
         {
             var path = Path.Join(dir, batch.GetName(i));
             FileSystemInfo fi = batch.GetType(i) == EntryType.Directory ? new DirectoryInfo(path) : new FileInfo(path);
             if (fi.Exists || fi.LinkTarget is not null)
             {
-                size = fi is FileInfo f && f.Exists ? f.Length : 0;
-                mtime = fi.LastWriteTimeUtc.Ticks;
+                var fields = batch.Fields;
+                if ((fields & StatFields.Size) != 0) s.Size = fi is FileInfo f && f.Exists ? f.Length : 0;
+                if ((fields & StatFields.ModifiedTime) != 0) s.ModifiedTicks = fi.LastWriteTimeUtc.Ticks;
+                if ((fields & StatFields.CreationTime) != 0) s.CreationTicks = fi.CreationTimeUtc.Ticks;
+                if ((fields & StatFields.LastAccessTime) != 0) s.AccessTicks = fi.LastAccessTimeUtc.Ticks;
+                if ((fields & StatFields.Attributes) != 0) s.Attributes = fi.Attributes;
             }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-        batch.SetStat(i, size, mtime);
+        batch.SetStat(i, s);
     }
 }

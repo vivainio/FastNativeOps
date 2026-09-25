@@ -14,6 +14,9 @@ public sealed class DirectoryBatch
     private readonly EntryType[] _types;
     private readonly long[]? _sizes;
     private readonly long[]? _mtimes;    // DateTime ticks (UTC); DateTime.MinValue.Ticks if unavailable
+    private readonly long[]? _ctimes;    // creation, same encoding
+    private readonly long[]? _atimes;    // last access, same encoding
+    private readonly FileAttributes[]? _attributes;
     private int _used;
 
     internal DirectoryBatch(int capacity, StatFields fields = StatFields.None)
@@ -23,6 +26,9 @@ public sealed class DirectoryBatch
         Fields = fields;
         if ((fields & StatFields.Size) != 0) _sizes = new long[capacity];
         if ((fields & StatFields.ModifiedTime) != 0) _mtimes = new long[capacity];
+        if ((fields & StatFields.CreationTime) != 0) _ctimes = new long[capacity];
+        if ((fields & StatFields.LastAccessTime) != 0) _atimes = new long[capacity];
+        if ((fields & StatFields.Attributes) != 0) _attributes = new FileAttributes[capacity];
     }
 
     /// <summary>The stat fields that were requested for this batch.</summary>
@@ -44,13 +50,51 @@ public sealed class DirectoryBatch
         return new DateTime(_mtimes[index], DateTimeKind.Utc);
     }
 
+    /// <summary>
+    /// Creation time (UTC), or DateTime.MinValue if unavailable. Matches .NET's <see cref="FileSystemInfo.CreationTimeUtc"/>
+    /// on Linux, which is the older of the change time and the modification time, not the birth time (btime), so it
+    /// is available on every filesystem including NFS. Elsewhere it is what System.IO reports.
+    /// </summary>
+    public DateTime GetCreationTimeUtc(int index)
+    {
+        if (_ctimes is null) throw new InvalidOperationException("StatFields.CreationTime was not requested.");
+        if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
+        return new DateTime(_ctimes[index], DateTimeKind.Utc);
+    }
+
+    /// <summary>Last access time (UTC), or DateTime.MinValue if unavailable. Subject to the mount's atime policy (relatime, noatime).</summary>
+    public DateTime GetLastAccessTimeUtc(int index)
+    {
+        if (_atimes is null) throw new InvalidOperationException("StatFields.LastAccessTime was not requested.");
+        if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
+        return new DateTime(_atimes[index], DateTimeKind.Utc);
+    }
+
+    /// <summary>
+    /// Attributes as .NET derives them on Unix: <see cref="FileAttributes.Directory"/>, <see cref="FileAttributes.ReadOnly"/>
+    /// (readable but not writable for the permission class, owner, group or other, that applies to the effective user),
+    /// <see cref="FileAttributes.Hidden"/> (name starts with '.'), <see cref="FileAttributes.ReparsePoint"/> (symbolic
+    /// link), or <see cref="FileAttributes.Normal"/> if none apply. (FileAttributes)(-1) if unavailable.
+    /// On Linux a symbolic link is not followed: it reports ReparsePoint only, where .NET also adds Directory and
+    /// ReadOnly from its target.
+    /// </summary>
+    public FileAttributes GetAttributes(int index)
+    {
+        if (_attributes is null) throw new InvalidOperationException("StatFields.Attributes was not requested.");
+        if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
+        return _attributes[index];
+    }
+
     internal byte[] NamesBuffer => _names;
     internal int NameOffset(int index) => _starts[index];
 
-    internal void SetStat(int index, long size, long mtimeTicks)
+    internal void SetStat(int index, in EntryStat s)
     {
-        if (_sizes is not null) _sizes[index] = size;
-        if (_mtimes is not null) _mtimes[index] = mtimeTicks;
+        if (_sizes is not null) _sizes[index] = s.Size;
+        if (_mtimes is not null) _mtimes[index] = s.ModifiedTicks;
+        if (_ctimes is not null) _ctimes[index] = s.CreationTicks;
+        if (_atimes is not null) _atimes[index] = s.AccessTicks;
+        if (_attributes is not null) _attributes[index] = s.Attributes;
     }
 
     public int Count { get; private set; }
@@ -118,4 +162,18 @@ public sealed class DirectoryBatch
         Count++;
         _starts[Count] = _used;
     }
+}
+
+/// <summary>Stat values for one entry; fields that were not requested are ignored by <see cref="DirectoryBatch.SetStat"/>.</summary>
+internal struct EntryStat
+{
+    public long Size, ModifiedTicks, CreationTicks, AccessTicks;
+    public FileAttributes Attributes;
+
+    /// <summary>The entry vanished or could not be stat'ed.</summary>
+    public static EntryStat Missing => new()
+    {
+        Size = -1, ModifiedTicks = DateTime.MinValue.Ticks, CreationTicks = DateTime.MinValue.Ticks,
+        AccessTicks = DateTime.MinValue.Ticks, Attributes = (FileAttributes)(-1),
+    };
 }

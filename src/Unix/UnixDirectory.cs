@@ -192,13 +192,15 @@ internal static unsafe partial class UnixDirectory
     }
 
     private const int AT_SYMLINK_NOFOLLOW = 0x100, AT_STATX_DONT_SYNC = 0x4000;
-    private const uint STATX_MTIME = 0x40, STATX_SIZE = 0x200;
+    private const uint STATX_MODE = 0x2, STATX_UID = 0x8, STATX_GID = 0x10, STATX_ATIME = 0x20, STATX_MTIME = 0x40,
+        STATX_CTIME = 0x80, STATX_SIZE = 0x200;
     private const int ENOSYS = 38, EPERM = 1;
 
     /// <summary>
-    /// Fills size/mtime for every entry in the batch with statx(dirfd, name, ...), relative to the open directory fd.
-    /// With <paramref name="allowStale"/>, AT_STATX_DONT_SYNC lets the kernel answer from cached attributes
-    /// (on NFS: the attributes READDIRPLUS already delivered) instead of a server round trip per file.
+    /// Fills the requested stat fields for every entry in the batch with statx(dirfd, name, ...), relative to the open
+    /// directory fd: one call per entry whatever the fields. With <paramref name="allowStale"/>, AT_STATX_DONT_SYNC lets
+    /// the kernel answer from cached attributes (on NFS: the attributes READDIRPLUS already delivered) instead of a
+    /// server round trip per file.
     /// </summary>
     internal static void StatBatch(int fd, string dir, DirectoryBatch batch, bool allowStale, int helpers)
     {
@@ -207,13 +209,19 @@ internal static unsafe partial class UnixDirectory
         for (int i = 0; i < batch.Count; i++) StatOne(fd, dir, batch, i, allowStale, sx);
     }
 
+    private static uint StatxMask(StatFields f) =>
+        ((f & StatFields.Size) != 0 ? STATX_SIZE : 0)
+        | ((f & StatFields.ModifiedTime) != 0 ? STATX_MTIME : 0)
+        | ((f & StatFields.CreationTime) != 0 ? STATX_CTIME | STATX_MTIME : 0)   // .NET: older of ctime and mtime
+        | ((f & StatFields.LastAccessTime) != 0 ? STATX_ATIME : 0)
+        | ((f & StatFields.Attributes) != 0 ? STATX_MODE | STATX_UID | STATX_GID : 0);
+
     // Thread-safe: writes only entry i of the batch; sx is a per-thread 256-byte scratch buffer.
     private static void StatOne(int fd, string dir, DirectoryBatch batch, int i, bool allowStale, byte* sx)
     {
         if (SysStatx == 0 || s_statxUnavailable) { StatEmulation.FillOne(dir, batch, i); return; }
 
-        uint mask = ((batch.Fields & StatFields.Size) != 0 ? STATX_SIZE : 0)
-                  | ((batch.Fields & StatFields.ModifiedTime) != 0 ? STATX_MTIME : 0);
+        uint mask = StatxMask(batch.Fields);
         int flags = AT_SYMLINK_NOFOLLOW | (allowStale ? AT_STATX_DONT_SYNC : 0);
 
         nint r;
@@ -228,19 +236,71 @@ internal static unsafe partial class UnixDirectory
                 s_statxUnavailable = true;
                 StatEmulation.FillOne(dir, batch, i);
             }
-            else batch.SetStat(i, -1, DateTime.MinValue.Ticks);   // e.g. ENOENT: vanished since listing
+            else batch.SetStat(i, EntryStat.Missing);   // e.g. ENOENT: vanished since listing
             return;
         }
-        // struct statx: mask@0 size@40 mtime{sec@112, nsec@120}
+        // struct statx: mask@0 uid@20 gid@24 mode@28(u16) size@40 atime@64 ctime@96 mtime@112 (each {sec i64, nsec u32})
         if ((*(uint*)sx & mask) != mask)         // filesystem didn't provide it: fall back for this entry
         {
             StatEmulation.FillOne(dir, batch, i);
             return;
         }
-        long size = (long)*(ulong*)(sx + 40);
-        long sec = *(long*)(sx + 112);
-        uint nsec = *(uint*)(sx + 120);
-        batch.SetStat(i, size, DateTime.UnixEpoch.Ticks + sec * TimeSpan.TicksPerSecond + nsec / 100);
+        var s = new EntryStat
+        {
+            Size = (long)*(ulong*)(sx + 40),
+            AccessTicks = Ticks(sx + 64),
+            ModifiedTicks = Ticks(sx + 112),
+        };
+        if ((batch.Fields & StatFields.CreationTime) != 0)
+            s.CreationTicks = Math.Min(Ticks(sx + 96), s.ModifiedTicks);
+        if ((batch.Fields & StatFields.Attributes) != 0)
+            s.Attributes = Attributes(*(ushort*)(sx + 28), *(uint*)(sx + 20), *(uint*)(sx + 24), batch.GetNameUtf8(i));
+        batch.SetStat(i, s);
+    }
+
+    private static long Ticks(byte* ts) =>
+        DateTime.UnixEpoch.Ticks + *(long*)ts * TimeSpan.TicksPerSecond + *(uint*)(ts + 8) / 100;
+
+    private const int S_IFMT = 0xF000, S_IFDIR = 0x4000, S_IFLNK = 0xA000;
+
+    // Mirrors .NET's FileStatus on Unix, except that a symlink is not followed (no Directory/ReadOnly from its target).
+    private static FileAttributes Attributes(int mode, uint uid, uint gid, ReadOnlySpan<byte> name)
+    {
+        FileAttributes a = 0;
+        int type = mode & S_IFMT;
+        if (type == S_IFLNK) a |= FileAttributes.ReparsePoint;
+        else
+        {
+            if (type == S_IFDIR) a |= FileAttributes.Directory;
+            // The permission class that applies: owner, else a group we belong to, else other.
+            int shift = uid == Credentials.EUid ? 6 : Credentials.IsMemberOfGroup(gid) ? 3 : 0;
+            if ((mode >> shift & 4) != 0 && (mode >> shift & 2) == 0) a |= FileAttributes.ReadOnly;
+        }
+        if (name.Length > 0 && name[0] == (byte)'.') a |= FileAttributes.Hidden;
+        return a == 0 ? FileAttributes.Normal : a;
+    }
+
+    [LibraryImport(Lib, EntryPoint = "geteuid")] private static partial uint geteuid();
+    [LibraryImport(Lib, EntryPoint = "getegid")] private static partial uint getegid();
+    [LibraryImport(Lib, EntryPoint = "getgroups")] private static partial int getgroups(int size, uint* list);
+
+    /// <summary>The process's effective uid and groups, read once: they are assumed not to change while enumerating.</summary>
+    private static class Credentials
+    {
+        public static readonly uint EUid = geteuid();
+        private static readonly uint EGid = getegid();
+        private static readonly uint[] Groups = ReadGroups();
+
+        public static bool IsMemberOfGroup(uint gid) => gid == EGid || Array.IndexOf(Groups, gid) >= 0;
+
+        private static uint[] ReadGroups()
+        {
+            int n = getgroups(0, null);
+            if (n <= 0) return [];
+            var g = new uint[n];
+            fixed (uint* p = g) n = getgroups(n, p);
+            return n <= 0 ? [] : g[..n];
+        }
     }
 
     /// <summary>
