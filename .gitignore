@@ -5,3 +5,4 @@ obj/
 BenchmarkDotNet.Artifacts/
 site/
 .cache/
+HANDOVER.md

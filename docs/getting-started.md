@@ -25,10 +25,11 @@ foreach (FileEntry e in FastDirectory.Enumerate("/usr"))
 | You want | Use |
 |---|---|
 | Names and types, simple code | [`Enumerate` / `List`](guide/listing.md) |
+| Replace `Directory.GetFiles` / `GetDirectories` | [`EnumerateFiles` / `EnumerateDirectories`](guide/listing.md#drop-in-for-directorygetfiles-getdirectories) |
 | Chunks of N entries as arrays | [`EnumerateBatches`](guide/listing.md#batches) |
 | Lowest allocation, optional size / mtime | [`EnumerateBatchBuffers`](guide/batch-buffers.md) |
 | Everything under a directory | [`WalkBatchBuffers`](guide/walk.md) |
-| Only some names | [`EntryFilter`](guide/filtering.md) |
+| Only some names (skipping stat for the rest) | [`EntryFilter`](guide/filtering.md) with `EnumerateBatchBuffers` or `WalkBatchBuffers` |
 
 ## Configure once at startup
 

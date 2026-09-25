@@ -334,7 +334,7 @@ internal static unsafe partial class UnixDirectory
 
     /// <summary>Zero-allocation batches straight from the kernel's getdents64 buffer. The same batch is reused.</summary>
     internal static IEnumerable<DirectoryBatch> EnumerateGetdentsBatches(
-        string path, int batchSize, StatFields fields, bool allowStale, int parallelism)
+        string path, int batchSize, StatFields fields, bool allowStale, int parallelism, EntryFilter? filter)
     {
         nint dir = opendir(path);
         if (dir == 0)
@@ -359,7 +359,7 @@ internal static unsafe partial class UnixDirectory
                     }
                     if (n == 0) break;
                 }
-                pos = FillBatch(buf, pos, n, batch, path);
+                pos = FillBatch(buf, pos, n, batch, path, filter);
                 if (batch.Count == batch.Capacity)
                 {
                     if (fields != StatFields.None)

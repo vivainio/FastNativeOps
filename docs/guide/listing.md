@@ -18,6 +18,18 @@ List<FileEntry> all = FastDirectory.List(path);
 The type comes free with the directory entry (`d_type`). On filesystems that do not report it (older XFS, some FUSE and
 network mounts) the library asks the OS for that entry instead, which costs one call.
 
+## Drop-in for `Directory.GetFiles` / `GetDirectories`
+
+```csharp
+string[] files = FastDirectory.EnumerateFiles(path).ToArray();        // like Directory.GetFiles(path)
+string[] dirs  = FastDirectory.EnumerateDirectories(path).ToArray();  // like Directory.GetDirectories(path)
+```
+
+These return full paths (`Path.Join(path, name)`) and split entries exactly as `System.IO` does, which is **not** the
+same as filtering on `EntryType`: a symbolic link to a directory is a directory (links are followed), while dangling
+links, FIFOs, sockets and devices are files. Only symbolic links and entries of unknown type cost an extra stat call.
+On Windows these call `System.IO` directly. There is no search-pattern overload; combine with a LINQ `Where`.
+
 ## Laziness and errors
 
 `Enumerate` reads from the native directory handle as you iterate and closes it when the loop ends, throws, or is

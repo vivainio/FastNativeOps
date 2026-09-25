@@ -54,26 +54,30 @@ public static class FastDirectory
     /// Elsewhere it is emulated with System.IO (slower).</para>
     /// <para><paramref name="statParallelism"/> sets how many stat calls run concurrently (0 = use
     /// <see cref="FastNativeOptions.StatParallelism"/>); it mainly helps on high-latency filesystems such as NFS.</para>
+    /// <para><paramref name="filter"/> decides which entries are reported (see <see cref="EntryFilters"/>). It runs before
+    /// the stat pass, so entries it rejects cost no stat call.</para>
     /// </summary>
     public static IEnumerable<DirectoryBatch> EnumerateBatchBuffers(
         string path, int batchSize, NativeBackend backend = NativeBackend.Auto,
-        StatFields fields = StatFields.None, bool allowCachedAttributes = false, int statParallelism = 0)
+        StatFields fields = StatFields.None, bool allowCachedAttributes = false, int statParallelism = 0,
+        EntryFilter? filter = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
         ArgumentOutOfRangeException.ThrowIfNegative(statParallelism);
         int par = statParallelism == 0 ? FastNativeOptions.StatParallelism : statParallelism;
         if (!OperatingSystem.IsWindows() && Unix.UnixDirectory.UsesGetdents(backend))
-            return Unix.UnixDirectory.EnumerateGetdentsBatches(path, batchSize, fields, allowCachedAttributes, par);
-        return EmulatedBatchBuffers(path, batchSize, backend, fields, par);
+            return Unix.UnixDirectory.EnumerateGetdentsBatches(path, batchSize, fields, allowCachedAttributes, par, filter);
+        return EmulatedBatchBuffers(path, batchSize, backend, fields, par, filter);
     }
 
     private static IEnumerable<DirectoryBatch> EmulatedBatchBuffers(
-        string path, int batchSize, NativeBackend backend, StatFields fields, int parallelism)
+        string path, int batchSize, NativeBackend backend, StatFields fields, int parallelism, EntryFilter? filter)
     {
         var batch = new DirectoryBatch(batchSize, fields) { DirectoryPath = path };
         foreach (var e in Enumerate(path, backend))
         {
+            if (filter is not null && !Passes(filter, e.Name, e.Type)) continue;
             batch.Add(e.Name, e.Type);
             if (batch.Count == batchSize)
             {
@@ -164,4 +168,41 @@ public static class FastDirectory
     }
 
     public static List<FileEntry> List(string path) => Enumerate(path).ToList();
+
+    /// <summary>
+    /// Full paths (<c>Path.Join(path, name)</c>) of the entries that <see cref="Directory.EnumerateFiles(string)"/>
+    /// would return: everything except directories and symbolic links to directories. Dangling links, FIFOs,
+    /// sockets and devices count as files. Only symbolic links (and entries of unknown type) cost an extra stat call.
+    /// </summary>
+    public static IEnumerable<string> EnumerateFiles(string path) => Classified(path, directories: false);
+
+    /// <summary>
+    /// Full paths of the entries that <see cref="Directory.EnumerateDirectories(string)"/> would return:
+    /// directories and symbolic links to directories.
+    /// </summary>
+    public static IEnumerable<string> EnumerateDirectories(string path) => Classified(path, directories: true);
+
+    private static IEnumerable<string> Classified(string path, bool directories)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        if (OperatingSystem.IsWindows())
+            return directories ? Directory.EnumerateDirectories(path) : Directory.EnumerateFiles(path);
+        return ClassifiedUnix(path, directories);
+    }
+
+    private static IEnumerable<string> ClassifiedUnix(string path, bool directories)
+    {
+        foreach (var e in Enumerate(path))
+            if (IsDirectoryLike(path, e) == directories)
+                yield return Path.Join(path, e.Name);
+    }
+
+    // System.IO's rule on Unix: a directory, or anything whose target (following links) is one. Directory.Exists
+    // follows links and returns false for dangling links and entries that vanished.
+    internal static bool IsDirectoryLike(string dir, FileEntry e) => e.Type switch
+    {
+        EntryType.Directory => true,
+        EntryType.File or EntryType.Other => false,
+        _ => Directory.Exists(Path.Join(dir, e.Name)),
+    };
 }

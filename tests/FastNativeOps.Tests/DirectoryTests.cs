@@ -105,6 +105,37 @@ public class DirectoryTests(TempDirFixture fx) : IClassFixture<TempDirFixture>
                     AssertStat(fx.Path, bs, par, cached, backend);
     }
 
+    [Theory, MemberData(nameof(Backends))]
+    public void BatchBuffers_Filter_ReportsOnlyMatches_WithCorrectStat(NativeBackend backend)
+    {
+        var expected = Expected().Where(n => n.StartsWith("file-00")).ToArray();   // file-0000 .. file-0099
+        Assert.Equal(100, expected.Length);
+        foreach (int bs in new[] { 1, 7, 64, 100_000 })
+        {
+            var got = new List<string>();
+            foreach (var b in FastDirectory.EnumerateBatchBuffers(fx.Path, bs, backend, StatFields.Size, filter: EntryFilters.Glob("file-00*")))
+            {
+                Assert.InRange(b.Count, 1, bs);
+                for (int i = 0; i < b.Count; i++)
+                {
+                    var name = b.GetName(i);
+                    Assert.Equal(int.Parse(name.AsSpan(5, 4)) * 3, b.GetSize(i));   // stat stays aligned with the filtered entries
+                    got.Add(name);
+                }
+            }
+            Assert.Equal(expected, got.OrderBy(x => x, StringComparer.Ordinal).ToArray());
+        }
+    }
+
+    [Theory, MemberData(nameof(Backends))]
+    public void BatchBuffers_Filter_ByType_And_RejectAll(NativeBackend backend)
+    {
+        var dirs = FastDirectory.EnumerateBatchBuffers(fx.Path, 10, backend, filter: EntryFilters.OfType(EntryType.Directory))
+            .SelectMany(b => Enumerable.Range(0, b.Count).Select(b.GetName)).ToList();
+        Assert.Equal(["sub"], dirs);
+        Assert.Empty(FastDirectory.EnumerateBatchBuffers(fx.Path, 10, backend, StatFields.Size, filter: (_, _) => false));
+    }
+
     [Fact]
     public void Stat_NotRequested_Throws()
     {

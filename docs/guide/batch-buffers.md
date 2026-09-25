@@ -23,6 +23,19 @@ foreach (DirectoryBatch batch in FastDirectory.EnumerateBatchBuffers(path, 1000)
 | `DirectoryPath`, `Depth` | which directory the entries belong to (see [walk](walk.md)) |
 | `GetSize(i)`, `GetModifiedTimeUtc(i)` | only if requested, see [Size and modification time](stat.md) |
 
+## Filtering before stat
+
+Pass `filter:` to report only matching entries. The filter runs before the stat pass, so entries it rejects cost no
+stat call, which matters on NFS. See [Filtering](filtering.md).
+
+```csharp
+foreach (var batch in FastDirectory.EnumerateBatchBuffers(path, 1000,
+             fields: StatFields.Size | StatFields.ModifiedTime,
+             filter: EntryFilters.And(EntryFilters.OfType(EntryType.File), EntryFilters.Extension(".log"))))
+    for (int i = 0; i < batch.Count; i++)
+        Console.WriteLine($"{batch.GetName(i)} {batch.GetSize(i)}");   // only .log files were stat'ed
+```
+
 !!! warning "Do not keep the batch"
     The same object, and the spans you got from it, are overwritten on the next iteration. Copy what you need
     (`GetName`, `ToArray`) before moving on.

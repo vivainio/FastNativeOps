@@ -9,11 +9,15 @@ IEnumerable<FileEntry>      Enumerate(string path);
 IEnumerable<FileEntry>      Enumerate(string path, NativeBackend backend);
 List<FileEntry>             List(string path);
 
+IEnumerable<string>         EnumerateFiles(string path);        // full paths, same set as Directory.EnumerateFiles
+IEnumerable<string>         EnumerateDirectories(string path);  // full paths, same set as Directory.EnumerateDirectories
+
 IEnumerable<FileEntry[]>    EnumerateBatches(string path, int batchSize, NativeBackend backend = Auto);
 
 IEnumerable<DirectoryBatch> EnumerateBatchBuffers(
     string path, int batchSize, NativeBackend backend = Auto,
-    StatFields fields = None, bool allowCachedAttributes = false, int statParallelism = 0);
+    StatFields fields = None, bool allowCachedAttributes = false, int statParallelism = 0,
+    EntryFilter? filter = null);   // filter runs before stat; see Filtering
 
 IEnumerable<DirectoryBatch> WalkBatchBuffers(string root, int batchSize, WalkOptions? options = null);
 ```

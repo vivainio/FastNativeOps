@@ -23,6 +23,9 @@ Entries are `FileEntry(Name, Type)` where `Type` is `File`, `Directory`, `Symbol
 `.` and `..` are skipped. Enumeration is lazy: the native handle is opened on first iteration and closed when the
 loop ends or is disposed. `FastDirectory.List(path)` returns everything as a `List<FileEntry>`.
 
+`FastDirectory.EnumerateFiles(path)` / `EnumerateDirectories(path)` return full paths split exactly like
+`Directory.EnumerateFiles` / `EnumerateDirectories` (a symbolic link to a directory counts as a directory).
+
 ### Batches
 
 For directories with thousands of entries:
@@ -72,7 +75,7 @@ subdirectories (a plain deep chain needs O(1), a tree that branches at every lev
 deep, heavily branching trees can exceed `ulimit -n`; then it throws `IOException` (errno 24) and never silently skips. Elsewhere the walk is emulated with path-based enumeration. It is single-threaded;
 stat parallelism (below) still applies within each batch.
 
-### Filtering a walk
+### Filtering (walks and batch buffers)
 
 ```csharp
 var options = new WalkOptions
@@ -86,6 +89,17 @@ var options = new WalkOptions
 into a stack buffer). It runs **before** the stat pass: entries that do not match cost no `statx` call, which is where
 the time goes on NFS. It only decides what is *reported*: subdirectories are still entered even when the filter hides
 them; use `ShouldDescend` to prune. Case-insensitive options fold ASCII letters only.
+
+The same filters work for a single directory through `EnumerateBatchBuffers`:
+
+```csharp
+foreach (var batch in FastDirectory.EnumerateBatchBuffers(path, 1000, fields: StatFields.Size,
+                                                          filter: EntryFilters.OfType(EntryType.File)))
+    { /* only regular files, and only they were stat'ed */ }
+```
+
+Only `WalkBatchBuffers` and `EnumerateBatchBuffers` take a filter. `Enumerate` and `EnumerateBatches` already give you
+string names, so a LINQ `Where` is just as cheap there.
 
 ### Size and modification time
 
