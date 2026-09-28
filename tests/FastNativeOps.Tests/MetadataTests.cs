@@ -85,7 +85,10 @@ public class MetadataTests(MetadataDirFixture fx) : IClassFixture<MetadataDirFix
     {
         var got = Collect(backend, 1, cached: true);
         Assert.Equal(MetadataDirFixture.AccessTime, got["plain"].A);
-        Assert.Equal(new DateTime(2021, 1, 1, 0, 0, 0, DateTimeKind.Utc), got["later-chmod"].C);   // older of ctime/mtime
+        if (OperatingSystem.IsLinux())   // no birth time: older of ctime/mtime
+            Assert.Equal(new DateTime(2021, 1, 1, 0, 0, 0, DateTimeKind.Utc), got["later-chmod"].C);
+        else                             // real birth time, as FileInfo reports it
+            Assert.Equal(new FileInfo(fx.P("later-chmod")).CreationTimeUtc, got["later-chmod"].C);
         Assert.Equal(FileAttributes.Normal, got["plain"].Attr);
         Assert.Equal(FileAttributes.Hidden, got[".hidden"].Attr);
         Assert.Equal(FileAttributes.Directory, got["dir"].Attr);
