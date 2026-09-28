@@ -89,12 +89,17 @@ public class MetadataTests(MetadataDirFixture fx) : IClassFixture<MetadataDirFix
             Assert.Equal(new DateTime(2021, 1, 1, 0, 0, 0, DateTimeKind.Utc), got["later-chmod"].C);
         else                             // real birth time, as FileInfo reports it
             Assert.Equal(new FileInfo(fx.P("later-chmod")).CreationTimeUtc, got["later-chmod"].C);
+        if (OperatingSystem.IsWindows())   // real attributes (Archive etc.), exactly as System.IO reports them
+        {
+            foreach (var name in new[] { "plain", ".hidden", "dir", ".hiddendir", "ro" })
+                Assert.Equal(File.GetAttributes(fx.P(name)), got[name].Attr);
+            return;
+        }
         Assert.Equal(FileAttributes.Normal, got["plain"].Attr);
         Assert.Equal(FileAttributes.Hidden, got[".hidden"].Attr);
         Assert.Equal(FileAttributes.Directory, got["dir"].Attr);
         Assert.Equal(FileAttributes.Directory | FileAttributes.Hidden, got[".hiddendir"].Attr);
         Assert.Equal(FileAttributes.ReadOnly, got["ro"].Attr);
-        if (OperatingSystem.IsWindows()) return;
         Assert.Equal(FileAttributes.Directory | FileAttributes.ReadOnly, got["rodir"].Attr);
         Assert.Equal(FileAttributes.Normal, got["none"].Attr);    // not readable: not "read-only"
         Assert.Equal(FileAttributes.Normal, got["wo"].Attr);
