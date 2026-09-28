@@ -98,7 +98,7 @@ public class WalkTests(TreeFixture fx) : IClassFixture<TreeFixture>
 
     [Fact]
     public void Walk_MissingRoot_Throws() =>
-        Assert.ThrowsAny<IOException>(() => FastDirectory.WalkBatchBuffers(Path.Join(fx.Root, "nope"), 10).ToList());
+        Assert.Throws<DirectoryNotFoundException>(() => FastDirectory.WalkBatchBuffers(Path.Join(fx.Root, "nope"), 10).ToList());
 
     [Fact]
     public void Walk_SymlinkLoop_IsReportedNotFollowed()
@@ -136,7 +136,7 @@ public class WalkTests(TreeFixture fx) : IClassFixture<TreeFixture>
         {
             try { Directory.GetFileSystemEntries(locked); return; } catch (UnauthorizedAccessException) { }   // running as root: nothing to test
 
-            Assert.ThrowsAny<IOException>(() => Walk(dir, 10));
+            Assert.Throws<UnauthorizedAccessException>(() => Walk(dir, 10));   // as System.IO
             var got = Walk(dir, 10, new WalkOptions { IgnoreInaccessible = true });
             Assert.Equal(new[] { "locked", "ok.txt" }, Sorted(got));
         }

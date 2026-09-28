@@ -79,7 +79,7 @@ public class ClassificationTests(LinkDirFixture fx) : IClassFixture<LinkDirFixtu
     public void MissingDirectory_Throws()
     {
         var missing = fx.P("nope");
-        Assert.ThrowsAny<IOException>(() => FastDirectory.EnumerateFiles(missing).ToList());
-        Assert.ThrowsAny<IOException>(() => FastDirectory.EnumerateDirectories(missing).ToList());
+        Assert.Throws<DirectoryNotFoundException>(() => FastDirectory.EnumerateFiles(missing).ToList());
+        Assert.Throws<DirectoryNotFoundException>(() => FastDirectory.EnumerateDirectories(missing).ToList());
     }
 }

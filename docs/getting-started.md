@@ -18,7 +18,7 @@ foreach (FileEntry e in FastDirectory.Enumerate("/usr"))
 ```
 
 `Enumerate` is lazy and returns names and entry types only. It does **not** stat anything, which is what makes it fast.
-`.` and `..` are skipped. A missing or unreadable directory throws `IOException` when iteration starts.
+`.` and `..` are skipped. A missing directory throws `DirectoryNotFoundException` and an unreadable one `UnauthorizedAccessException` when iteration starts, the same types as System.IO.
 
 ## Choose the right call
 

@@ -32,7 +32,7 @@ internal static unsafe partial class UnixDirectory
     {
         int rootFd = openat(AT_FDCWD, root, ODirectory | O_CLOEXEC);      // the root may itself be a symlink
         if (rootFd < 0)
-            throw new IOException($"Cannot open '{root}' (errno {Marshal.GetLastPInvokeError()})");
+            throw OpenError(root, Marshal.GetLastPInvokeError());
 
         var stack = new Stack<WalkFrame>();
         stack.Push(new WalkFrame(rootFd, root, 0));
@@ -98,7 +98,7 @@ internal static unsafe partial class UnixDirectory
                             throw new IOException($"Too many open files while opening '{Path.Join(f.Path, name)}' " +
                                                   $"(errno {errno}); the walk needs file descriptors for the directories above it that still have unvisited subdirectories. Raise ulimit -n.");
                         if (o.IgnoreInaccessible) continue;
-                        throw new IOException($"Cannot open '{Path.Join(f.Path, name)}' (errno {errno})");
+                        throw OpenError(Path.Join(f.Path, name), errno);
                     }
                     stack.Push(new WalkFrame(child, Path.Join(f.Path, name), f.Depth + 1));
                     if (f.Next >= f.Subdirs.Count)      // last subdirectory taken: this directory's fd is no longer needed

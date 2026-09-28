@@ -46,7 +46,15 @@ internal static unsafe partial class UnixDirectory
 
     private static volatile bool s_statxUnavailable;
 
-    private const int EINTR = 4;
+    private const int EINTR = 4, EACCES = 13;
+    private static readonly int ENAMETOOLONG = OperatingSystem.IsMacOS() ? 63 : 36;
+
+    /// <summary>The exception System.IO throws when a directory cannot be opened, so callers can catch the same types.</summary>
+    internal static Exception OpenError(string path, int errno) =>
+        errno == ENOENT || errno == ENOTDIR ? new DirectoryNotFoundException($"Could not find a part of the path '{path}'.")
+        : errno == EACCES || errno == EPERM ? new UnauthorizedAccessException($"Access to the path '{path}' is denied.")
+        : errno == ENAMETOOLONG ? new PathTooLongException($"The path '{path}' is too long.")
+        : new IOException($"Cannot open '{path}' (errno {errno})", errno);
 
     private const string Lib = "FastNativeOpsLibc";
 
@@ -107,7 +115,7 @@ internal static unsafe partial class UnixDirectory
     {
         nint dir = opendir(path);
         if (dir == 0)
-            throw new IOException($"Cannot open '{path}' (errno {Marshal.GetLastPInvokeError()})");
+            throw OpenError(path, Marshal.GetLastPInvokeError());
         var buf = ArrayPool<byte>.Shared.Rent(64 * 1024);
         try
         {
@@ -398,7 +406,7 @@ internal static unsafe partial class UnixDirectory
     {
         nint dir = opendir(path);
         if (dir == 0)
-            throw new IOException($"Cannot open '{path}' (errno {Marshal.GetLastPInvokeError()})");
+            throw OpenError(path, Marshal.GetLastPInvokeError());
         var buf = ArrayPool<byte>.Shared.Rent(64 * 1024);
         var batch = new DirectoryBatch(batchSize, fields) { DirectoryPath = path };
         int minEntries = FastNativeOptions.StatParallelMinEntries;
@@ -465,7 +473,7 @@ internal static unsafe partial class UnixDirectory
     {
         nint dir = opendir(path);
         if (dir == 0)
-            throw new IOException($"Cannot open '{path}' (errno {Marshal.GetLastPInvokeError()})");
+            throw OpenError(path, Marshal.GetLastPInvokeError());
         try
         {
             while (true)

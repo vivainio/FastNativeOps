@@ -43,7 +43,9 @@ IEnumerable<DirectoryBatch> WalkBatchBuffers(string root, int batchSize, WalkOpt
 
 | | |
 |---|---|
-| `IOException` | directory cannot be opened or read (message includes the errno); out of file descriptors during a walk (errno 24) |
+| `DirectoryNotFoundException` | the directory does not exist or a path component is not a directory (as System.IO) |
+| `UnauthorizedAccessException` | permission denied opening the directory (as System.IO) |
+| `IOException` | other open or read failures (message includes the errno); out of file descriptors during a walk (errno 24) |
 | `PlatformNotSupportedException` | a backend that is not available on this platform was requested explicitly |
 | `InvalidOperationException` | any stat getter without requesting its field |
 | `ArgumentOutOfRangeException` | `batchSize < 1`, negative depth or parallelism |

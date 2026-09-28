@@ -54,7 +54,20 @@ public class DirectoryTests(TempDirFixture fx) : IClassFixture<TempDirFixture>
 
     [Fact]
     public void Enumerate_MissingDirectory_Throws() =>
-        Assert.ThrowsAny<IOException>(() => FastDirectory.Enumerate(System.IO.Path.Combine(fx.Path, "nope")).ToList());
+        Assert.Throws<DirectoryNotFoundException>(() => FastDirectory.Enumerate(System.IO.Path.Combine(fx.Path, "nope")).ToList());
+
+    [Theory, MemberData(nameof(Backends))]
+    public void OpenFailures_ThrowSameExceptionTypeAsSystemIO(NativeBackend backend)
+    {
+        var file = System.IO.Path.Combine(fx.Path, "file-0001-é.txt");
+        foreach (var bad in new[] { System.IO.Path.Combine(fx.Path, "nope"), System.IO.Path.Combine(file, "x"), file })
+        {
+            var expected = Record.Exception(() => Directory.GetFileSystemEntries(bad))!.GetType();
+            Assert.IsType(expected, Record.Exception(() => FastDirectory.Enumerate(bad, backend).ToList()));
+            Assert.IsType(expected, Record.Exception(() => FastDirectory.EnumerateBatchBuffers(bad, 10, backend, StatFields.Size).ToList()));
+            Assert.IsType(expected, Record.Exception(() => FastDirectory.WalkBatchBuffers(bad, 10, new WalkOptions { Backend = backend }).ToList()));
+        }
+    }
 
     [Theory, MemberData(nameof(Backends))]
     public void BatchBuffers_MatchesSystemIO_ForVariousBatchSizes(NativeBackend backend)
