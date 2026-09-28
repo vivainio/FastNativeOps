@@ -37,8 +37,8 @@ public static class EntryFilters
         };
     }
 
-    /// <summary>Only entries of the given type.</summary>
-    public static EntryFilter OfType(EntryType type) => (_, t) => t == type;
+    /// <summary>Only entries whose type is one of <paramref name="types"/>, e.g. <c>EntryType.File | EntryType.SymbolicLink</c>.</summary>
+    public static EntryFilter OfType(EntryType types) => (_, t) => (t & types) != 0;
 
     public static EntryFilter Not(EntryFilter f) => (n, t) => !f(n, t);
     public static EntryFilter And(params EntryFilter[] fs) => (n, t) => { foreach (var f in fs) if (!f(n, t)) return false; return true; };

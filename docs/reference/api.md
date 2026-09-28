@@ -30,7 +30,7 @@ IEnumerable<DirectoryBatch> WalkBatchBuffers(string root, int batchSize, WalkOpt
 | Type | |
 |---|---|
 | `FileEntry` | `readonly record struct FileEntry(string Name, EntryType Type)` |
-| `EntryType` | `Unknown`, `File`, `Directory`, `SymbolicLink`, `Other` |
+| `EntryType` | `[Flags]`: `Unknown`, `File`, `Directory`, `SymbolicLink`, `Other`; combo `NotDirectory`. An entry has exactly one value |
 | `DirectoryBatch` | reusable batch: `Count`, `GetNameUtf8`, `GetName`, `GetType`, indexer, `ToArray`, `GetSize`, `GetModifiedTimeUtc`, `GetCreationTimeUtc`, `GetLastAccessTimeUtc`, `GetAttributes`, `Fields`, `DirectoryPath`, `Depth` |
 | `StatFields` | flags: `None`, `Size`, `ModifiedTime`, `CreationTime`, `LastAccessTime`, `Attributes` |
 | `NativeBackend` | `Auto`, `Readdir`, `Getdents64` |

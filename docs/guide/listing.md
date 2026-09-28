@@ -15,6 +15,10 @@ List<FileEntry> all = FastDirectory.List(path);
 | `Other` | socket, FIFO, device, ... |
 | `Unknown` | the filesystem did not say and the fallback probe failed |
 
+`EntryType` is a `[Flags]` enum so filters can take a set (`EntryFilters.OfType(EntryType.File | EntryType.SymbolicLink)`,
+or `EntryType.NotDirectory` for everything but directories). Each entry still has exactly one of the values above, so
+`==` comparisons work as before.
+
 The type comes free with the directory entry (`d_type`). On filesystems that do not report it (older XFS, some FUSE and
 network mounts) the library asks the OS for that entry instead, which costs one call.
 

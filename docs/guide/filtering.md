@@ -54,7 +54,7 @@ not match) but still finds `src/a/b/c.cs`. To prune, use `ShouldDescend`.
 | `EntryFilters.Glob("*.cs")` | `*` any sequence, `?` one whole character (code point) |
 | `EntryFilters.Extension(".cs")` | names ending with the text |
 | `EntryFilters.Regex(regex)` | `Regex.IsMatch` on the name; decodes into a stack buffer, no string per entry |
-| `EntryFilters.OfType(EntryType.File)` | only that type |
+| `EntryFilters.OfType(EntryType.File)` | only that type; takes a combination, e.g. `File \| SymbolicLink` or `NotDirectory` |
 | `Not(f)`, `And(f, g, ...)`, `Or(f, g, ...)` | combinators |
 
 `Glob` and `Extension` take `ignoreCase: true`, which folds ASCII letters only. Filters match the entry **name**, not the

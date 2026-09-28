@@ -62,6 +62,20 @@ public class FilterTests(TreeFixture fx) : IClassFixture<TreeFixture>
         Assert.True(Match(EntryFilters.Or(EntryFilters.Extension(".cs"), txt), "x.txt"));
     }
 
+    [Fact]
+    public void OfType_AcceptsCombinations()
+    {
+        EntryType[] all = [EntryType.Unknown, EntryType.File, EntryType.Directory, EntryType.SymbolicLink, EntryType.Other];
+        var fileOrLink = EntryFilters.OfType(EntryType.File | EntryType.SymbolicLink);
+        var notDir = EntryFilters.OfType(EntryType.NotDirectory);
+        foreach (var t in all)
+        {
+            Assert.Equal(t is EntryType.File or EntryType.SymbolicLink, Match(fileOrLink, "x", t));
+            Assert.Equal(t != EntryType.Directory, Match(notDir, "x", t));
+            Assert.Equal(Match(EntryFilters.Not(EntryFilters.OfType(EntryType.Directory)), "x", t), Match(notDir, "x", t));
+        }
+    }
+
     public static IEnumerable<object[]> Backends() => DirectoryTests.Backends();
 
     private List<string> Walk(EntryFilter? filter, NativeBackend backend, int bs = 16, Action<WalkOptions>? tweak = null)
