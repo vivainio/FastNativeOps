@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-# Builds self-contained, unzip-and-run benchmark bundles: benchmarks/out/fastnativeops-bench-<rid>.zip
-# Usage: benchmarks/package.sh [rid ...]   (default: linux-x64 linux-arm64 osx-arm64 osx-x64 win-x64 win-arm64)
+# Builds one portable, framework-dependent bundle: benchmarks/out/fastnativeops-bench.zip
+# Runs on any OS/CPU that has the .NET 8 (or newer) runtime: unzip, then ./run.sh or run.cmd.
 set -euo pipefail
 cd "$(dirname "$0")"
-rids=("$@"); [ ${#rids[@]} -gt 0 ] || rids=(linux-x64 linux-arm64 osx-arm64 osx-x64 win-x64 win-arm64)
 rm -rf out; mkdir -p out
-for rid in "${rids[@]}"; do
-  dir=out/fastnativeops-bench-$rid
-  dotnet publish Bench/Bench.csproj -c Release -r "$rid" --self-contained -o "$dir" -p:DebugType=none
-  cp dist/README.txt "$dir/"
-  case $rid in win-*) cp dist/run.cmd "$dir/" ;; *) cp dist/run.sh "$dir/"; chmod +x "$dir/run.sh" "$dir/Bench" ;; esac
-  (cd out && zip -qr "fastnativeops-bench-$rid.zip" "fastnativeops-bench-$rid" && rm -rf "fastnativeops-bench-$rid")
-  echo "==> out/fastnativeops-bench-$rid.zip"
-done
+dir=out/fastnativeops-bench
+dotnet publish Bench/Bench.csproj -c Release -o "$dir" -p:UseAppHost=false -p:DebugType=none
+cp dist/README.txt dist/run.cmd dist/run.sh "$dir/"
+chmod +x "$dir/run.sh"
+(cd out && zip -qr fastnativeops-bench.zip fastnativeops-bench && rm -rf fastnativeops-bench)
+echo "==> out/fastnativeops-bench.zip"

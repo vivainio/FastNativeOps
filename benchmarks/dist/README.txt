@@ -1,6 +1,6 @@
 FastNativeOps benchmark bundle
 ==============================
-Self-contained: unzip and run. No .NET SDK or runtime required.
+Portable (any OS/CPU): unzip and run. Needs the .NET 8 (or newer) runtime or SDK on the machine.
 
   Linux/macOS:  ./run.sh
   Windows:      run.cmd
@@ -15,7 +15,6 @@ Defaults: all benchmarks, --job short (a few minutes). Extra arguments are passe
 Environment variables:
   FASTNATIVEOPS_BENCH_FILES   file count, comma-separated for several sizes (default 50000)
   FASTNATIVEOPS_BENCH_DIR     same as --dir; parent dir for the test files; point at the filesystem you care about (NFS, XFS, ...)
-  FASTNATIVEOPS_BENCH_OUTOFPROC=1   use BenchmarkDotNet's out-of-process toolchain (needs the SDK)
 
 Runs in the current directory: results (markdown tables, CSV) are written to ./BenchmarkDotNet.Artifacts/results/
 under wherever you launched it, so the bundle can live on a read-only share.

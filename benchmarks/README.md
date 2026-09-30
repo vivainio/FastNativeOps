@@ -3,9 +3,9 @@
 BenchmarkDotNet comparison of `FastNativeOps` against `System.IO` on a directory with many files. Results depend a
 lot on OS, filesystem and hardware, so please run it in your own target environment.
 
-Prebuilt, self-contained bundles (no .NET needed; unzip and run `./run.sh` / `run.cmd`) are attached to each
-[GitHub release](https://github.com/vivainio/FastNativeOps/releases) as `fastnativeops-bench-<rid>.zip`; build them
-locally with `benchmarks/package.sh`.
+A prebuilt portable bundle (any OS/CPU with .NET 8+; unzip and run `./run.sh` / `run.cmd`) is attached to each
+[GitHub release](https://github.com/vivainio/FastNativeOps/releases) as `fastnativeops-bench.zip`; build it locally
+with `benchmarks/package.sh`.
 
 To run from source, requires the .NET 8 SDK (or newer). From the repo root:
 
