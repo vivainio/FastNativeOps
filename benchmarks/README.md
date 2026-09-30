@@ -3,7 +3,11 @@
 BenchmarkDotNet comparison of `FastNativeOps` against `System.IO` on a directory with many files. Results depend a
 lot on OS, filesystem and hardware, so please run it in your own target environment.
 
-Requires the .NET 10 SDK. From the repo root:
+Prebuilt, self-contained bundles (no .NET needed; unzip and run `./run.sh` / `run.cmd`) are attached to each
+[GitHub release](https://github.com/vivainio/FastNativeOps/releases) as `fastnativeops-bench-<rid>.zip`; build them
+locally with `benchmarks/package.sh`.
+
+To run from source, requires the .NET 8 SDK (or newer). From the repo root:
 
 ```bash
 dotnet run -c Release --project benchmarks/Bench -- --filter '*'
@@ -20,7 +24,7 @@ Options (environment variables):
 | Variable | Default | Meaning |
 |---|---|---|
 | `FASTNATIVEOPS_BENCH_FILES` | `50000` | Number of files to create; comma-separated for several sizes, e.g. `1000,50000,500000` |
-| `FASTNATIVEOPS_BENCH_DIR` | system temp | Parent directory for the test files. Point it at the filesystem you care about (ext4, XFS, NFS, ...) |
+| `FASTNATIVEOPS_BENCH_DIR` (or `--dir <path>`) | system temp | Parent directory for the test files. Point it at the filesystem you care about (ext4, XFS, NFS, ...) |
 
 The test directory (plus 100 subdirectories) is created before the run and deleted afterwards.
 

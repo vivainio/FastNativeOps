@@ -6,3 +6,4 @@ BenchmarkDotNet.Artifacts/
 site/
 .cache/
 HANDOVER.md
+benchmarks/out/

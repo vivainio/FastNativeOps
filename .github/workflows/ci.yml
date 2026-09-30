@@ -64,3 +64,22 @@ jobs:
           user: ${{ vars.NUGET_USER }}
       - name: Push to NuGet
         run: dotnet nuget push out/*.nupkg --api-key ${{ steps.login.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+  bench-bundles:
+    if: github.event_name == 'release'
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # upload release assets
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+      - name: Build self-contained benchmark bundles (all platforms)
+        run: benchmarks/package.sh
+      - name: Attach to the release
+        run: gh release upload "$TAG" benchmarks/out/*.zip --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}

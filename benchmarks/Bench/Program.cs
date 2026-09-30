@@ -2,7 +2,32 @@ using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Running;
 using FastNativeOps;
 
-BenchmarkRunner.Run<ListBench>(args: args);
+// Defaults so the published bundle runs with no arguments and needs no .NET SDK on the target machine:
+//  - in-process toolchain (BenchmarkDotNet's default spawns `dotnet build`, which needs the SDK)
+//  - all benchmarks, short job (pass --job default for the full, slower run)
+var list = args.ToList();
+// --dir <path>: where to create the test files (same as FASTNATIVEOPS_BENCH_DIR); consumed here, not passed on.
+for (int i = 0; i < list.Count; i++)
+{
+    if (list[i] == "--dir" && i + 1 < list.Count)
+    {
+        Environment.SetEnvironmentVariable("FASTNATIVEOPS_BENCH_DIR", Path.GetFullPath(list[i + 1]));
+        list.RemoveRange(i, 2);
+        break;
+    }
+    if (list[i].StartsWith("--dir=", StringComparison.Ordinal))
+    {
+        Environment.SetEnvironmentVariable("FASTNATIVEOPS_BENCH_DIR", Path.GetFullPath(list[i][6..]));
+        list.RemoveAt(i);
+        break;
+    }
+}
+bool Has(params string[] names) => list.Any(a => names.Contains(a, StringComparer.OrdinalIgnoreCase));
+if (!Has("--inprocess", "--toolchain", "--outofproc") && Environment.GetEnvironmentVariable("FASTNATIVEOPS_BENCH_OUTOFPROC") != "1")
+    list.Add("--inProcess");
+if (!Has("--filter", "-f", "--list", "--anyCategories", "--allCategories")) list.AddRange(["--filter", "*"]);
+if (!Has("--job", "-j")) list.AddRange(["--job", "short"]);
+BenchmarkSwitcher.FromTypes([typeof(ListBench)]).Run(list.ToArray());
 
 [MemoryDiagnoser]
 public class ListBench
