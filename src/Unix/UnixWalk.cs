@@ -51,6 +51,7 @@ internal static unsafe partial class UnixDirectory
                     f.Read = true;
                     batch.Clear();
                     batch.DirectoryPath = f.Path;
+                    batch.DirFd = f.Fd;
                     batch.Depth = f.Depth;
                     int pos = 0, n = 0;
                     while (true)
@@ -68,7 +69,7 @@ internal static unsafe partial class UnixDirectory
                             }
                             if (n == 0) break;
                         }
-                        pos = FillBatch(buf, pos, n, batch, f.Path, o.EntryFilter, f.Depth < o.MaxDepth ? (f.Subdirs ??= []) : null);
+                        pos = FillBatch(buf, pos, n, batch, f.Path, f.Fd, o.EntryFilter, f.Depth < o.MaxDepth ? (f.Subdirs ??= []) : null);
                         if (batch.Count == batch.Capacity)
                         {
                             if (stat) StatBatch(f.Fd, f.Path, batch, o.AllowCachedAttributes, batch.Count >= minEntries ? parallelism - 1 : 0);
@@ -82,6 +83,7 @@ internal static unsafe partial class UnixDirectory
                         yield return batch;
                         batch.Clear();
                     }
+                    batch.DirFd = -1;      // this directory's fd may be closed from here on; never leave a stale number behind
                     continue;
                 }
 
@@ -115,6 +117,7 @@ internal static unsafe partial class UnixDirectory
         }
         finally
         {
+            batch.DirFd = -1;
             while (stack.Count > 0)
             {
                 int fd = stack.Pop().Fd;

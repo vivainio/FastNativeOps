@@ -113,9 +113,17 @@ public sealed class DirectoryBatch
 
     public string GetName(int index) => Encoding.UTF8.GetString(GetNameUtf8(index));
 
+    /// <summary>Internal marker: the filesystem reported DT_UNKNOWN and the type has not been looked up yet.</summary>
+    /// <summary>The open directory fd while the enumeration is live (so pending types can be resolved with statx); -1 otherwise.</summary>
+    internal int DirFd { get; set; } = -1;
+
+    internal const EntryType PendingType = (EntryType)32;
+
     public EntryType GetType(int index)
     {
         if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
+        if (_types[index] == PendingType)
+            _types[index] = Unix.UnixDirectory.Probe(DirFd, DirectoryPath, GetNameUtf8(index));   // one statx, only for callers that ask
         return _types[index];
     }
 

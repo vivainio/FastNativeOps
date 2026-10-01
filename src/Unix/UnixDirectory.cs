@@ -86,7 +86,45 @@ internal static unsafe partial class UnixDirectory
     private const byte DT_DIR = 4, DT_REG = 8, DT_LNK = 10;
 
     // DT_UNKNOWN happens on some filesystems (older XFS, some network/FUSE mounts): ask the OS.
-    private static EntryType Probe(string dir, string name)
+    // First choice: one statx(dirfd, name, AT_SYMLINK_NOFOLLOW, STATX_TYPE) relative to the open directory. No path string,
+    // no .NET FileSystemInfo, and it asks the filesystem for the file type only. Falls back to the path-based probe when
+    // statx is unavailable (old kernel, seccomp, non-Linux), the fd is gone, or the filesystem doesn't report the type.
+    internal static EntryType Probe(int fd, string dir, ReadOnlySpan<byte> nameUtf8)
+    {
+        if (fd >= 0 && SysStatx != 0 && !s_statxUnavailable)
+        {
+            Span<byte> nm = nameUtf8.Length < 512 ? stackalloc byte[nameUtf8.Length + 1] : new byte[nameUtf8.Length + 1];
+            nameUtf8.CopyTo(nm);
+            nm[^1] = 0;
+            byte* sx = stackalloc byte[256];
+            nint r;
+            fixed (byte* np = nm)
+                r = syscallStatx(SysStatx, fd, np, AT_SYMLINK_NOFOLLOW, STATX_TYPE, sx);
+            if (r >= 0)
+            {
+                if ((*(uint*)sx & STATX_TYPE) != 0)
+                    return (*(ushort*)(sx + 28) & S_IFMT) switch
+                    {
+                        S_IFDIR => EntryType.Directory,
+                        S_IFLNK => EntryType.SymbolicLink,
+                        S_IFREG => EntryType.File,
+                        _ => EntryType.Other,
+                    };
+            }
+            else
+            {
+                int errno = Marshal.GetLastPInvokeError();
+                if (errno is ENOSYS or EPERM) s_statxUnavailable = true;
+                else return EntryType.Unknown;      // e.g. ENOENT: vanished since listing
+            }
+        }
+        return Probe(dir, System.Text.Encoding.UTF8.GetString(nameUtf8));
+    }
+
+    internal static EntryType Probe(int fd, string dir, string name) =>
+        Probe(fd, dir, System.Text.Encoding.UTF8.GetBytes(name));
+
+    internal static EntryType Probe(string dir, string name)
     {
         try
         {
@@ -147,7 +185,7 @@ internal static unsafe partial class UnixDirectory
                         DT_REG => EntryType.File,
                         DT_DIR => EntryType.Directory,
                         DT_LNK => EntryType.SymbolicLink,
-                        0 => Probe(path, name),
+                        0 => Probe(fd, path, nameSpan),
                         _ => EntryType.Other,
                     };
                     yield return new FileEntry(name, type);
@@ -171,7 +209,7 @@ internal static unsafe partial class UnixDirectory
     };
 
     // Parses records from pos until the batch is full or the buffer is consumed; returns the new pos.
-    private static int FillBatch(byte[] buf, int pos, int n, DirectoryBatch batch, string path,
+    private static int FillBatch(byte[] buf, int pos, int n, DirectoryBatch batch, string path, int fd,
         EntryFilter? filter = null, List<string>? subdirs = null)
     {
         while (pos < n && batch.Count < batch.Capacity)
@@ -189,7 +227,10 @@ internal static unsafe partial class UnixDirectory
                 DT_REG => EntryType.File,
                 DT_DIR => EntryType.Directory,
                 DT_LNK => EntryType.SymbolicLink,
-                0 => Probe(path, System.Text.Encoding.UTF8.GetString(name)),
+                // DT_UNKNOWN costs a stat per entry (slow on NFS/EFS). With no filter and no walk to feed, leave it
+                // pending: DirectoryBatch.GetType resolves it on first use, so name-only consumers never pay.
+                0 when filter is null && subdirs is null => DirectoryBatch.PendingType,
+                0 => Probe(fd, path, name),
                 _ => EntryType.Other,
             };
             if (type == EntryType.Directory) subdirs?.Add(System.Text.Encoding.UTF8.GetString(name));   // descend regardless of the filter
@@ -200,7 +241,7 @@ internal static unsafe partial class UnixDirectory
     }
 
     private const int AT_SYMLINK_NOFOLLOW = 0x100, AT_STATX_DONT_SYNC = 0x4000;
-    private const uint STATX_MODE = 0x2, STATX_UID = 0x8, STATX_GID = 0x10, STATX_ATIME = 0x20, STATX_MTIME = 0x40,
+    private const uint STATX_TYPE = 0x1, STATX_MODE = 0x2, STATX_UID = 0x8, STATX_GID = 0x10, STATX_ATIME = 0x20, STATX_MTIME = 0x40,
         STATX_CTIME = 0x80, STATX_SIZE = 0x200;
     private const int ENOSYS = 38, EPERM = 1;
 
@@ -269,7 +310,7 @@ internal static unsafe partial class UnixDirectory
     private static long Ticks(byte* ts) =>
         DateTime.UnixEpoch.Ticks + *(long*)ts * TimeSpan.TicksPerSecond + *(uint*)(ts + 8) / 100;
 
-    private const int S_IFMT = 0xF000, S_IFDIR = 0x4000, S_IFLNK = 0xA000;
+    private const int S_IFMT = 0xF000, S_IFDIR = 0x4000, S_IFLNK = 0xA000, S_IFREG = 0x8000;
 
     // Mirrors .NET's FileStatus on Unix, except that a symlink is not followed (no Directory/ReadOnly from its target).
     private static FileAttributes Attributes(int mode, uint uid, uint gid, ReadOnlySpan<byte> name)
@@ -413,6 +454,7 @@ internal static unsafe partial class UnixDirectory
         try
         {
             int fd = dirfd(dir), pos = 0, n = 0;
+            batch.DirFd = fd;
             while (true)
             {
                 if (pos >= n)
@@ -427,7 +469,7 @@ internal static unsafe partial class UnixDirectory
                     }
                     if (n == 0) break;
                 }
-                pos = FillBatch(buf, pos, n, batch, path, filter);
+                pos = FillBatch(buf, pos, n, batch, path, fd, filter);
                 if (batch.Count == batch.Capacity)
                 {
                     if (fields != StatFields.None)
@@ -450,6 +492,7 @@ internal static unsafe partial class UnixDirectory
         finally
         {
             ArrayPool<byte>.Shared.Return(buf);
+            batch.DirFd = -1;      // the fd is closed below; pending types fall back to the path-based probe
             closedir(dir);
         }
     }
@@ -489,7 +532,7 @@ internal static unsafe partial class UnixDirectory
                     DT_REG => EntryType.File,
                     DT_DIR => EntryType.Directory,
                     DT_LNK => EntryType.SymbolicLink,
-                    0 => Probe(path, name),
+                    0 => Probe(dirfd(dir), path, name),
                     _ => EntryType.Other,
                 };
                 yield return new FileEntry(name, type);
