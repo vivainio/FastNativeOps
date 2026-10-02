@@ -126,7 +126,7 @@ public class DirectoryTests(TempDirFixture fx) : IClassFixture<TempDirFixture>
         foreach (int bs in new[] { 1, 7, 64, 100_000 })
         {
             var got = new List<string>();
-            foreach (var b in FastDirectory.EnumerateBatchBuffers(fx.Path, bs, backend, StatFields.Size, filter: EntryFilters.Glob("file-00*")))
+            foreach (var b in FastDirectory.EnumerateBatchBuffers(fx.Path, bs, backend, StatFields.Size, nameFilter: EntryFilters.Glob("file-00*")))
             {
                 Assert.InRange(b.Count, 1, bs);
                 for (int i = 0; i < b.Count; i++)

@@ -81,11 +81,11 @@ stat parallelism (below) still applies within each batch.
 var options = new WalkOptions
 {
     Fields = StatFields.Size,
-    EntryFilter = EntryFilters.Regex(new Regex(@"^report-\d{4}\.csv$")),   // or Glob("*.csv"), Extension(".cs"), Not/And/Or, or your own
+    NameFilter = EntryFilters.Regex(new Regex(@"^report-\d{4}\.csv$")),   // or Glob("*.csv"), Extension(".cs"), Not/And/Or, or your own
 };
 ```
 
-`EntryFilter` receives the UTF-8 name and the entry type, so custom filters allocate nothing (the regex helper decodes
+`NameFilter` (name only, runs first, so a rejected entry never has its type resolved) and `EntryFilter` (name and type) both receive the UTF-8 name, so custom filters allocate nothing (the regex helper decodes
 into a stack buffer). It runs **before** the stat pass: entries that do not match cost no `statx` call, which is where
 the time goes on NFS. It only decides what is *reported*: subdirectories are still entered even when the filter hides
 them; use `ShouldDescend` to prune. Case-insensitive options fold ASCII letters only.

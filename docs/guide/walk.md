@@ -23,7 +23,7 @@ Each batch holds entries of **one directory**; `DirectoryPath` and `Depth` say w
 |---|---|
 | `MaxDepth` | levels below the root to enter (0 = only the root's own entries); default unlimited |
 | `ShouldDescend(name, depth)` | return `false` to skip a subdirectory (it is still listed) |
-| `EntryFilter` | which entries are reported, see [Filtering](filtering.md) |
+| `NameFilter`, `EntryFilter` | which entries are reported (both must accept), see [Filtering](filtering.md) |
 | `IgnoreInaccessible` | skip directories that cannot be opened or read instead of throwing |
 | `Fields`, `AllowCachedAttributes`, `StatParallelism` | stat options, as in [Stat fields](stat.md) |
 | `Backend` | force a [backend](platforms.md) |

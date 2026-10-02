@@ -209,8 +209,8 @@ internal static unsafe partial class UnixDirectory
     };
 
     // Parses records from pos until the batch is full or the buffer is consumed; returns the new pos.
-    private static int FillBatch(byte[] buf, int pos, int n, DirectoryBatch batch, string path, int fd,
-        EntryFilter? filter = null, List<string>? subdirs = null)
+    internal static int FillBatch(byte[] buf, int pos, int n, DirectoryBatch batch, string path, int fd,
+        NameFilter? nameFilter = null, EntryFilter? filter = null, List<string>? subdirs = null)
     {
         while (pos < n && batch.Count < batch.Capacity)
         {
@@ -222,18 +222,22 @@ internal static unsafe partial class UnixDirectory
             pos += reclen;
 
             if (name is [(byte)'.'] or [(byte)'.', (byte)'.']) continue;
+            // Name filter first: a rejected entry never has its type resolved. When walking, directories must still be
+            // recognised so we can descend into them, so it waits until the type is known.
+            if (subdirs is null && nameFilter is not null && !nameFilter(name)) continue;
             var type = dtype switch
             {
                 DT_REG => EntryType.File,
                 DT_DIR => EntryType.Directory,
                 DT_LNK => EntryType.SymbolicLink,
-                // DT_UNKNOWN costs a stat per entry (slow on NFS/EFS). With no filter and no walk to feed, leave it
-                // pending: DirectoryBatch.GetType resolves it on first use, so name-only consumers never pay.
+                // DT_UNKNOWN costs a stat per entry (slow on NFS/EFS). Leave it pending when nothing needs the type now
+                // (no entry filter, no walk to feed): DirectoryBatch.GetType resolves it on first use.
                 0 when filter is null && subdirs is null => DirectoryBatch.PendingType,
                 0 => Probe(fd, path, name),
                 _ => EntryType.Other,
             };
             if (type == EntryType.Directory) subdirs?.Add(System.Text.Encoding.UTF8.GetString(name));   // descend regardless of the filter
+            if (subdirs is not null && nameFilter is not null && !nameFilter(name)) continue;
             if (filter is not null && !filter(name, type)) continue;
             batch.Add(name, type);
         }
@@ -443,7 +447,7 @@ internal static unsafe partial class UnixDirectory
 
     /// <summary>Zero-allocation batches straight from the kernel's getdents64 buffer. The same batch is reused.</summary>
     internal static IEnumerable<DirectoryBatch> EnumerateGetdentsBatches(
-        string path, int batchSize, StatFields fields, bool allowStale, int parallelism, EntryFilter? filter)
+        string path, int batchSize, StatFields fields, bool allowStale, int parallelism, EntryFilter? filter, NameFilter? nameFilter)
     {
         nint dir = opendir(path);
         if (dir == 0)
@@ -469,7 +473,7 @@ internal static unsafe partial class UnixDirectory
                     }
                     if (n == 0) break;
                 }
-                pos = FillBatch(buf, pos, n, batch, path, fd, filter);
+                pos = FillBatch(buf, pos, n, batch, path, fd, nameFilter, filter);
                 if (batch.Count == batch.Capacity)
                 {
                     if (fields != StatFields.None)

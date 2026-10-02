@@ -69,7 +69,7 @@ internal static unsafe partial class UnixDirectory
                             }
                             if (n == 0) break;
                         }
-                        pos = FillBatch(buf, pos, n, batch, f.Path, f.Fd, o.EntryFilter, f.Depth < o.MaxDepth ? (f.Subdirs ??= []) : null);
+                        pos = FillBatch(buf, pos, n, batch, f.Path, f.Fd, o.NameFilter, o.EntryFilter, f.Depth < o.MaxDepth ? (f.Subdirs ??= []) : null);
                         if (batch.Count == batch.Capacity)
                         {
                             if (stat) StatBatch(f.Fd, f.Path, batch, o.AllowCachedAttributes, batch.Count >= minEntries ? parallelism - 1 : 0);

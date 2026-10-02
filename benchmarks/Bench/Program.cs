@@ -281,10 +281,10 @@ public class ListBench
         return n;
     }
 
-    private long WalkSum(EntryFilter? filter)
+    private long WalkSum(NameFilter? filter)
     {
         long n = 0;
-        var o = new WalkOptions { Fields = StatFields.Size | StatFields.ModifiedTime, EntryFilter = filter };
+        var o = new WalkOptions { Fields = StatFields.Size | StatFields.ModifiedTime, NameFilter = filter };
         foreach (var b in FastDirectory.WalkBatchBuffers(_dir, 1000, o))
             for (int i = 0; i < b.Count; i++)
                 n += b.GetSize(i) + b.GetModifiedTimeUtc(i).Ticks % 2;

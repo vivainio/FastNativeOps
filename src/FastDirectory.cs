@@ -54,30 +54,32 @@ public static class FastDirectory
     /// Elsewhere it is emulated with System.IO (slower).</para>
     /// <para><paramref name="statParallelism"/> sets how many stat calls run concurrently (0 = use
     /// <see cref="FastNativeOptions.StatParallelism"/>); it mainly helps on high-latency filesystems such as NFS.</para>
-    /// <para><paramref name="filter"/> decides which entries are reported (see <see cref="EntryFilters"/>). It runs before
-    /// the stat pass, so entries it rejects cost no stat call.</para>
+    /// <para><paramref name="nameFilter"/> and <paramref name="filter"/> decide which entries are reported (see
+    /// <see cref="EntryFilters"/>); both must accept. They run before the stat pass, so rejected entries cost no stat call.
+    /// <paramref name="nameFilter"/> runs first and sees only the name, so an entry it rejects never has its type
+    /// resolved either, which matters on filesystems that report DT_UNKNOWN.</para>
     /// </summary>
     public static IEnumerable<DirectoryBatch> EnumerateBatchBuffers(
         string path, int batchSize, NativeBackend backend = NativeBackend.Auto,
         StatFields fields = StatFields.None, bool allowCachedAttributes = false, int statParallelism = 0,
-        EntryFilter? filter = null)
+        EntryFilter? filter = null, NameFilter? nameFilter = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
         ArgumentOutOfRangeException.ThrowIfNegative(statParallelism);
         int par = statParallelism == 0 ? FastNativeOptions.StatParallelism : statParallelism;
         if (!OperatingSystem.IsWindows() && Unix.UnixDirectory.UsesGetdents(backend))
-            return Unix.UnixDirectory.EnumerateGetdentsBatches(path, batchSize, fields, allowCachedAttributes, par, filter);
-        return EmulatedBatchBuffers(path, batchSize, backend, fields, par, filter);
+            return Unix.UnixDirectory.EnumerateGetdentsBatches(path, batchSize, fields, allowCachedAttributes, par, filter, nameFilter);
+        return EmulatedBatchBuffers(path, batchSize, backend, fields, par, filter, nameFilter);
     }
 
     private static IEnumerable<DirectoryBatch> EmulatedBatchBuffers(
-        string path, int batchSize, NativeBackend backend, StatFields fields, int parallelism, EntryFilter? filter)
+        string path, int batchSize, NativeBackend backend, StatFields fields, int parallelism, EntryFilter? filter, NameFilter? nameFilter)
     {
         var batch = new DirectoryBatch(batchSize, fields) { DirectoryPath = path };
         foreach (var e in Enumerate(path, backend))
         {
-            if (filter is not null && !Passes(filter, e.Name, e.Type)) continue;
+            if (!Passes(nameFilter, filter, e.Name, e.Type)) continue;
             batch.Add(e.Name, e.Type);
             if (batch.Count == batchSize)
             {
@@ -114,11 +116,12 @@ public static class FastDirectory
         return WalkEmulated(root, batchSize, options, par);
     }
 
-    private static bool Passes(EntryFilter filter, string name, EntryType type)
+    private static bool Passes(NameFilter? nameFilter, EntryFilter? filter, string name, EntryType type)
     {
+        if (nameFilter is null && filter is null) return true;
         Span<byte> utf8 = name.Length <= 256 ? stackalloc byte[768] : new byte[System.Text.Encoding.UTF8.GetMaxByteCount(name.Length)];
         int n = System.Text.Encoding.UTF8.GetBytes(name, utf8);
-        return filter(utf8[..n], type);
+        return (nameFilter is null || nameFilter(utf8[..n])) && (filter is null || filter(utf8[..n], type));
     }
 
     private static IEnumerable<DirectoryBatch> WalkEmulated(string root, int batchSize, WalkOptions o, int par)
@@ -146,7 +149,7 @@ public static class FastDirectory
                 }
                 var entry = it.Current;
                 if (entry.Type == EntryType.Directory && depth < o.MaxDepth) subdirs.Add(entry.Name);   // descend regardless of the filter
-                if (o.EntryFilter is not null && !Passes(o.EntryFilter, entry.Name, entry.Type)) continue;
+                if (!Passes(o.NameFilter, o.EntryFilter, entry.Name, entry.Type)) continue;
                 batch.Add(entry.Name, entry.Type);
                 if (batch.Count == batchSize)
                 {

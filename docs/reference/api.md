@@ -17,7 +17,7 @@ IEnumerable<FileEntry[]>    EnumerateBatches(string path, int batchSize, NativeB
 IEnumerable<DirectoryBatch> EnumerateBatchBuffers(
     string path, int batchSize, NativeBackend backend = Auto,
     StatFields fields = None, bool allowCachedAttributes = false, int statParallelism = 0,
-    EntryFilter? filter = null);   // filter runs before stat; see Filtering
+    EntryFilter? filter = null, NameFilter? nameFilter = null);   // both run before stat; see Filtering
 
 IEnumerable<DirectoryBatch> WalkBatchBuffers(string root, int batchSize, WalkOptions? options = null);
 ```
@@ -35,6 +35,7 @@ IEnumerable<DirectoryBatch> WalkBatchBuffers(string root, int batchSize, WalkOpt
 | `StatFields` | flags: `None`, `Size`, `ModifiedTime`, `CreationTime`, `LastAccessTime`, `Attributes` |
 | `NativeBackend` | `Auto`, `Readdir`, `Getdents64` |
 | `WalkOptions` | see [Recursive walk](../guide/walk.md) |
+| `NameFilter` | `delegate bool NameFilter(ReadOnlySpan<byte> nameUtf8)` |
 | `EntryFilter` | `delegate bool EntryFilter(ReadOnlySpan<byte> nameUtf8, EntryType type)` |
 | `EntryFilters` | `Glob`, `Extension`, `Regex`, `OfType`, `Not`, `And`, `Or` |
 | `FastNativeOptions` | static [configuration](configuration.md) |

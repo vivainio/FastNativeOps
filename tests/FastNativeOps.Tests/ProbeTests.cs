@@ -111,4 +111,59 @@ public sealed class ProbeTests : IDisposable
         Assert.Equal(EntryType.File, types["plain.txt"]);
         Assert.Equal(EntryType.SymbolicLink, types["link"]);
     }
+
+    // Synthetic getdents64 buffer: ino(8) off(8) reclen(2) type(1) name\0, every entry DT_UNKNOWN.
+    private static byte[] Dirents(params string[] names)
+    {
+        var ms = new MemoryStream();
+        foreach (var name in names)
+        {
+            var nm = U(name);
+            int reclen = (19 + nm.Length + 1 + 7) & ~7;
+            var rec = new byte[reclen];
+            BitConverter.GetBytes((ushort)reclen).CopyTo(rec, 16);
+            nm.CopyTo(rec, 19);
+            ms.Write(rec);
+        }
+        return ms.ToArray();
+    }
+
+    private DirectoryBatch Fill(byte[] buf, NameFilter? nameFilter, EntryFilter? filter, Action<DirectoryBatch>? whileOpen = null)
+    {
+        int fd = sys_open(_dir, 0);
+        var batch = new DirectoryBatch(16) { DirectoryPath = _dir, DirFd = fd };
+        try
+        {
+            UnixDirectory.FillBatch(buf, 0, buf.Length, batch, _dir, fd, nameFilter, filter);
+            whileOpen?.Invoke(batch);
+        }
+        finally { sys_close(fd); }
+        return batch;
+    }
+
+    [Fact]
+    public void Name_filter_rejects_unknown_entries_without_resolving_their_type()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        // "gone.log" does not exist: resolving its type would yield EntryType.Unknown, which the entry filter would then see.
+        var sawGone = false;
+        var batch = Fill(Dirents("plain.txt", "gone.log"), EntryFilters.Glob("*.txt"),
+            (name, type) => { if (Encoding.UTF8.GetString(name) == "gone.log") sawGone = true; return type != EntryType.Directory; },
+            b => Assert.Equal(EntryType.File, b.GetType(0)));
+        Assert.False(sawGone);
+        Assert.Equal(1, batch.Count);
+        Assert.Equal("plain.txt", batch.GetName(0));
+    }
+
+    [Fact]
+    public void Name_filter_alone_leaves_unknown_types_pending()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+        // With no entry filter nothing resolves the type eagerly; it is looked up when asked for.
+        Fill(Dirents("plain.txt", "sub"), EntryFilters.Glob("*.txt"), null, batch =>
+        {
+            Assert.Equal(1, batch.Count);
+            Assert.Equal(EntryType.File, batch.GetType(0));
+        });
+    }
 }

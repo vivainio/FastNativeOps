@@ -31,7 +31,7 @@ stat call, which matters on NFS. See [Filtering](filtering.md).
 ```csharp
 foreach (var batch in FastDirectory.EnumerateBatchBuffers(path, 1000,
              fields: StatFields.Size | StatFields.ModifiedTime,
-             filter: EntryFilters.And(EntryFilters.OfType(EntryType.File), EntryFilters.Extension(".log"))))
+             filter: EntryFilters.OfType(EntryType.File), nameFilter: EntryFilters.Extension(".log")))
     for (int i = 0; i < batch.Count; i++)
         Console.WriteLine($"{batch.GetName(i)} {batch.GetSize(i)}");   // only .log files were stat'ed
 ```

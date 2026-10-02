@@ -7,6 +7,7 @@ namespace FastNativeOps.Tests;
 public class FilterTests(TreeFixture fx) : IClassFixture<TreeFixture>
 {
     private static bool Match(EntryFilter f, string name, EntryType t = EntryType.File) => f(Encoding.UTF8.GetBytes(name), t);
+    private static bool Match(NameFilter f, string name, EntryType t = EntryType.File) => f(Encoding.UTF8.GetBytes(name));
 
     [Theory]
     [InlineData("*.cs", "a.cs", true)]
@@ -78,9 +79,12 @@ public class FilterTests(TreeFixture fx) : IClassFixture<TreeFixture>
 
     public static IEnumerable<object[]> Backends() => DirectoryTests.Backends();
 
-    private List<string> Walk(EntryFilter? filter, NativeBackend backend, int bs = 16, Action<WalkOptions>? tweak = null)
+    private List<string> Walk(NameFilter nameFilter, NativeBackend backend, int bs = 16, Action<WalkOptions>? tweak = null) =>
+        Walk(null, backend, bs, tweak, nameFilter);
+
+    private List<string> Walk(EntryFilter? filter, NativeBackend backend, int bs = 16, Action<WalkOptions>? tweak = null, NameFilter? nameFilter = null)
     {
-        var o = new WalkOptions { EntryFilter = filter, Backend = backend };
+        var o = new WalkOptions { EntryFilter = filter, NameFilter = nameFilter, Backend = backend };
         tweak?.Invoke(o);
         var list = new List<string>();
         foreach (var b in FastDirectory.WalkBatchBuffers(fx.Root, bs, o))
@@ -125,7 +129,7 @@ public class FilterTests(TreeFixture fx) : IClassFixture<TreeFixture>
     [Theory, MemberData(nameof(Backends))]
     public void Walk_FilterCombinedWithMaxDepthAndStat(NativeBackend backend)
     {
-        var o = new WalkOptions { EntryFilter = EntryFilters.Extension(".txt"), MaxDepth = 1, Fields = StatFields.Size, Backend = backend };
+        var o = new WalkOptions { NameFilter = EntryFilters.Extension(".txt"), MaxDepth = 1, Fields = StatFields.Size, Backend = backend };
         int n = 0;
         foreach (var b in FastDirectory.WalkBatchBuffers(fx.Root, 25, o))
         {

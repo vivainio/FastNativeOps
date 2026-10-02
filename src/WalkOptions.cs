@@ -16,6 +16,9 @@ public sealed class WalkOptions
     /// </summary>
     public EntryFilter? EntryFilter { get; set; }
 
+    /// <summary>First-pass filter on the name alone, ANDed with <see cref="EntryFilter"/>. Same descent rules.</summary>
+    public NameFilter? NameFilter { get; set; }
+
     /// <summary>Skip directories that cannot be opened or read (e.g. permission denied) instead of throwing.</summary>
     public bool IgnoreInaccessible { get; set; }
 

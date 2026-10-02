@@ -15,7 +15,7 @@ using FastNativeOps;
 var options = new WalkOptions
 {
     Fields = StatFields.Size | StatFields.ModifiedTime,
-    EntryFilter = EntryFilters.Glob("*.csv"),
+    NameFilter = EntryFilters.Glob("*.csv"),
 };
 
 foreach (DirectoryBatch batch in FastDirectory.WalkBatchBuffers("/mnt/data", 1000, options))

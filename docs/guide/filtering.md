@@ -14,21 +14,29 @@
 var options = new WalkOptions
 {
     Fields = StatFields.Size,
-    EntryFilter = EntryFilters.Regex(new Regex(@"^report-\d{4}\.csv$")),
+    NameFilter = EntryFilters.Regex(new Regex(@"^report-\d{4}\.csv$")),
 };
 
 // one directory
 foreach (var batch in FastDirectory.EnumerateBatchBuffers(path, 1000, fields: StatFields.Size,
-                                                          filter: EntryFilters.Glob("*.csv")))
+                                                          nameFilter: EntryFilters.Glob("*.csv")))
 { /* ... */ }
 ```
 
-An `EntryFilter` is `bool (ReadOnlySpan<byte> nameUtf8, EntryType type)`. It receives the UTF-8 name, so a custom filter
-allocates nothing:
+There are two filters, always combined with AND:
+
+- **`NameFilter`**, `bool (ReadOnlySpan<byte> nameUtf8)`, runs first and sees only the name. An entry it rejects never
+  has its type resolved, so it costs no stat even on filesystems that report `DT_UNKNOWN` (some NFS, FUSE, older XFS).
+  `Glob`, `Extension` and `Regex` are name filters.
+- **`EntryFilter`**, `bool (nameUtf8, EntryType type)`, then sees name and type. `OfType` is an entry filter, and so is
+  any custom test that needs the type. Both receive the UTF-8 name, so a custom filter allocates nothing:
 
 ```csharp
 options.EntryFilter = (name, type) => type == EntryType.File && name.EndsWith(".log"u8);
 ```
+
+With only a name filter, entry types stay unresolved until you read them (`batch.GetType(i)`). When walking, every
+type is still resolved so directories can be entered.
 
 ## Why a filter instead of an `if` in your loop
 
@@ -61,5 +69,5 @@ not match) but still finds `src/a/b/c.cs`. To prune, use `ShouldDescend`.
 path.
 
 !!! tip "Combining"
-    `EntryFilters.And(EntryFilters.OfType(EntryType.File), EntryFilters.Extension(".csv"))` reports only CSV files, so
+    `nameFilter: Extension(".csv")` with `filter: OfType(EntryType.File)` reports only CSV files, so
     directories are no longer reported, but they are still walked.
