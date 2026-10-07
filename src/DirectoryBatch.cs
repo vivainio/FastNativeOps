@@ -119,12 +119,24 @@ public sealed class DirectoryBatch
 
     internal const EntryType PendingType = (EntryType)32;
 
+    /// <summary>Internal marker: a symbolic link whose target's type has not been looked up yet (SymlinkHandling.Follow).</summary>
+    internal const EntryType PendingLinkType = (EntryType)64;
+
+    /// <summary>Links report the type of their target (see <see cref="SymlinkHandling.Follow"/>).</summary>
+    internal SymlinkHandling Symlinks { get; set; }
+
     public EntryType GetType(int index)
     {
         if ((uint)index >= (uint)Count) throw new ArgumentOutOfRangeException(nameof(index));
-        if (_types[index] == PendingType)
-            _types[index] = Unix.UnixDirectory.Probe(DirFd, DirectoryPath, GetNameUtf8(index));   // one statx, only for callers that ask
-        return _types[index];
+        var type = _types[index];
+        if (type == PendingType)
+        {
+            type = Unix.UnixDirectory.Probe(DirFd, DirectoryPath, GetNameUtf8(index));   // one statx, only for callers that ask
+            if (type == EntryType.SymbolicLink && Symlinks == SymlinkHandling.Follow) type = PendingLinkType;
+        }
+        if (type == PendingLinkType)
+            type = Unix.UnixDirectory.ProbeTarget(DirFd, DirectoryPath, GetNameUtf8(index));
+        return _types[index] = type;
     }
 
     public FileEntry this[int index] => new(GetName(index), GetType(index));

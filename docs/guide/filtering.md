@@ -47,8 +47,14 @@ goes on NFS. See the [benchmark](../benchmarks.md#filtered-walk-with-stat).
 
 Filters see the type straight from the directory entry, and links are **not** followed. `OfType(EntryType.File)` drops
 every symlink, and `OfType(EntryType.Directory)` misses symlinks to directories. If you need the `System.IO` split
-(where a link to a directory counts as a directory), use
+(where a link to a directory counts as a directory), pass `symlinks: SymlinkHandling.Follow` to `EnumerateBatchBuffers`, or use
 [`EnumerateFiles` / `EnumerateDirectories`](listing.md#drop-in-for-directorygetfiles-getdirectories).
+
+With `symlinks: SymlinkHandling.Follow` a link reports the type of its target, so filters and `GetType` see `Directory` for a link to
+a directory and `File` for a link to a file (`Other` for a device, FIFO or socket). A link that cannot be resolved
+(dangling, a loop, no permission) stays `SymbolicLink`; `NotDirectory` includes it, which is what `Directory.GetFiles`
+does. Only links pay for this, one `statx` relative to the directory descriptor each, and none for entries the name
+filter rejects. `WalkBatchBuffers` never follows links.
 
 ## It decides what is reported, not where the walk goes
 

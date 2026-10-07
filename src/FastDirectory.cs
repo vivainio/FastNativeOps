@@ -58,29 +58,41 @@ public static class FastDirectory
     /// <see cref="EntryFilters"/>); both must accept. They run before the stat pass, so rejected entries cost no stat call.
     /// <paramref name="nameFilter"/> runs first and sees only the name, so an entry it rejects never has its type
     /// resolved either, which matters on filesystems that report DT_UNKNOWN.</para>
+    /// <para>With <paramref name="symlinks"/> set to <see cref="SymlinkHandling.Follow"/> a symbolic link reports the type of its target, the way
+    /// <see cref="Directory.GetDirectories(string)"/> classifies it: <see cref="EntryType.Directory"/> for a link to a
+    /// directory, <see cref="EntryType.File"/> for a link to a file, <see cref="EntryType.Other"/> for a device, FIFO or
+    /// socket. A link that cannot be resolved (dangling, loop, no permission) stays <see cref="EntryType.SymbolicLink"/>,
+    /// which <see cref="EntryType.NotDirectory"/> includes. <see cref="StatFields.Attributes"/> then reports
+    /// <see cref="FileAttributes.ReparsePoint"/> plus Directory / ReadOnly from the target, as .NET does; times and size
+    /// stay the link's own. Only links pay: one extra statx each, and none when the name filter rejects them.
+    /// Not applied by <see cref="WalkBatchBuffers"/>, which never follows links.</para>
     /// </summary>
     public static IEnumerable<DirectoryBatch> EnumerateBatchBuffers(
         string path, int batchSize, NativeBackend backend = NativeBackend.Auto,
         StatFields fields = StatFields.None, bool allowCachedAttributes = false, int statParallelism = 0,
-        EntryFilter? filter = null, NameFilter? nameFilter = null)
+        EntryFilter? filter = null, NameFilter? nameFilter = null,
+        SymlinkHandling symlinks = SymlinkHandling.Report)
     {
+        if (!Enum.IsDefined(symlinks)) throw new ArgumentOutOfRangeException(nameof(symlinks));
         ArgumentException.ThrowIfNullOrEmpty(path);
         ArgumentOutOfRangeException.ThrowIfLessThan(batchSize, 1);
         ArgumentOutOfRangeException.ThrowIfNegative(statParallelism);
         int par = statParallelism == 0 ? FastNativeOptions.StatParallelism : statParallelism;
         if (!OperatingSystem.IsWindows() && Unix.UnixDirectory.UsesGetdents(backend))
-            return Unix.UnixDirectory.EnumerateGetdentsBatches(path, batchSize, fields, allowCachedAttributes, par, filter, nameFilter);
-        return EmulatedBatchBuffers(path, batchSize, backend, fields, par, filter, nameFilter);
+            return Unix.UnixDirectory.EnumerateGetdentsBatches(path, batchSize, fields, allowCachedAttributes, par, filter, nameFilter, symlinks);
+        return EmulatedBatchBuffers(path, batchSize, backend, fields, par, filter, nameFilter, symlinks);
     }
 
     private static IEnumerable<DirectoryBatch> EmulatedBatchBuffers(
-        string path, int batchSize, NativeBackend backend, StatFields fields, int parallelism, EntryFilter? filter, NameFilter? nameFilter)
+        string path, int batchSize, NativeBackend backend, StatFields fields, int parallelism, EntryFilter? filter, NameFilter? nameFilter,
+        SymlinkHandling symlinks)
     {
-        var batch = new DirectoryBatch(batchSize, fields) { DirectoryPath = path };
+        var batch = new DirectoryBatch(batchSize, fields) { DirectoryPath = path, Symlinks = symlinks };
         foreach (var e in Enumerate(path, backend))
         {
-            if (!Passes(nameFilter, filter, e.Name, e.Type)) continue;
-            batch.Add(e.Name, e.Type);
+            var type = symlinks == SymlinkHandling.Follow && e.Type == EntryType.SymbolicLink ? ResolveLinkByPath(path, e.Name) : e.Type;
+            if (!Passes(nameFilter, filter, e.Name, type)) continue;
+            batch.Add(e.Name, type);
             if (batch.Count == batchSize)
             {
                 if (fields != StatFields.None) StatEmulation.Fill(path, batch, batch.Count >= FastNativeOptions.StatParallelMinEntries ? parallelism : 1);
@@ -167,6 +179,23 @@ public static class FastDirectory
             for (int i = subdirs.Count - 1; i >= 0; i--)
                 if (o.ShouldDescend?.Invoke(subdirs[i], depth + 1) ?? true)
                     stack.Push((Path.Join(path, subdirs[i]), depth + 1));
+        }
+    }
+
+    // Path-based link resolution for platforms and fallbacks without statx on the directory fd. File.Exists is true for a
+    // dangling link, so the final target is resolved and checked itself. A FIFO or device counts as File here.
+    internal static EntryType ResolveLinkByPath(string dir, string name)
+    {
+        var path = Path.Join(dir, name);
+        if (Directory.Exists(path)) return EntryType.Directory;
+        try
+        {
+            var target = new FileInfo(path).ResolveLinkTarget(returnFinalTarget: true);
+            return (target?.Exists ?? File.Exists(path)) ? EntryType.File : EntryType.SymbolicLink;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)   // link loop, no permission
+        {
+            return EntryType.SymbolicLink;
         }
     }
 

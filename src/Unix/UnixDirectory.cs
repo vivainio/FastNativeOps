@@ -91,34 +91,60 @@ internal static unsafe partial class UnixDirectory
     // statx is unavailable (old kernel, seccomp, non-Linux), the fd is gone, or the filesystem doesn't report the type.
     internal static EntryType Probe(int fd, string dir, ReadOnlySpan<byte> nameUtf8)
     {
-        if (fd >= 0 && SysStatx != 0 && !s_statxUnavailable)
+        switch (StatxType(fd, nameUtf8, AT_SYMLINK_NOFOLLOW, out var type))
         {
-            Span<byte> nm = nameUtf8.Length < 512 ? stackalloc byte[nameUtf8.Length + 1] : new byte[nameUtf8.Length + 1];
-            nameUtf8.CopyTo(nm);
-            nm[^1] = 0;
-            byte* sx = stackalloc byte[256];
-            nint r;
-            fixed (byte* np = nm)
-                r = syscallStatx(SysStatx, fd, np, AT_SYMLINK_NOFOLLOW, STATX_TYPE, sx);
-            if (r >= 0)
-            {
-                if ((*(uint*)sx & STATX_TYPE) != 0)
-                    return (*(ushort*)(sx + 28) & S_IFMT) switch
-                    {
-                        S_IFDIR => EntryType.Directory,
-                        S_IFLNK => EntryType.SymbolicLink,
-                        S_IFREG => EntryType.File,
-                        _ => EntryType.Other,
-                    };
-            }
-            else
-            {
-                int errno = Marshal.GetLastPInvokeError();
-                if (errno is ENOSYS or EPERM) s_statxUnavailable = true;
-                else return EntryType.Unknown;      // e.g. ENOENT: vanished since listing
-            }
+            case StatxResult.Ok: return type;
+            case StatxResult.Failed: return EntryType.Unknown;      // e.g. ENOENT: vanished since listing
         }
         return Probe(dir, System.Text.Encoding.UTF8.GetString(nameUtf8));
+    }
+
+    /// <summary>
+    /// The type of what a symbolic link points at: Directory, File, or Other (device, FIFO, socket). A link whose
+    /// target cannot be resolved (dangling, loop, no permission) stays SymbolicLink. One statx that follows the link,
+    /// relative to the directory fd, so the cost is paid by links only.
+    /// </summary>
+    internal static EntryType ProbeTarget(int fd, string dir, ReadOnlySpan<byte> nameUtf8)
+    {
+        switch (StatxType(fd, nameUtf8, 0, out var type))
+        {
+            case StatxResult.Ok: return type;
+            case StatxResult.Failed: return EntryType.SymbolicLink;
+        }
+        return FastDirectory.ResolveLinkByPath(dir, System.Text.Encoding.UTF8.GetString(nameUtf8));
+    }
+
+    private enum StatxResult { Ok, Unavailable, Failed }
+
+    // One statx(dirfd, name, flags, STATX_TYPE). Unavailable: use a path-based probe instead (no fd, old kernel, seccomp,
+    // or the filesystem doesn't report the type). Failed: the entry is gone or unreachable.
+    private static StatxResult StatxType(int fd, ReadOnlySpan<byte> nameUtf8, int flags, out EntryType type)
+    {
+        type = EntryType.Unknown;
+        if (fd < 0 || SysStatx == 0 || s_statxUnavailable) return StatxResult.Unavailable;
+
+        Span<byte> nm = nameUtf8.Length < 512 ? stackalloc byte[nameUtf8.Length + 1] : new byte[nameUtf8.Length + 1];
+        nameUtf8.CopyTo(nm);
+        nm[^1] = 0;
+        byte* sx = stackalloc byte[256];
+        nint r;
+        fixed (byte* np = nm)
+            r = syscallStatx(SysStatx, fd, np, flags, STATX_TYPE, sx);
+        if (r < 0)
+        {
+            int errno = Marshal.GetLastPInvokeError();
+            if (errno is ENOSYS or EPERM) { s_statxUnavailable = true; return StatxResult.Unavailable; }
+            return StatxResult.Failed;
+        }
+        if ((*(uint*)sx & STATX_TYPE) == 0) return StatxResult.Unavailable;
+        type = (*(ushort*)(sx + 28) & S_IFMT) switch
+        {
+            S_IFDIR => EntryType.Directory,
+            S_IFLNK => EntryType.SymbolicLink,
+            S_IFREG => EntryType.File,
+            _ => EntryType.Other,
+        };
+        return StatxResult.Ok;
     }
 
     internal static EntryType Probe(int fd, string dir, string name) =>
@@ -229,11 +255,16 @@ internal static unsafe partial class UnixDirectory
             {
                 DT_REG => EntryType.File,
                 DT_DIR => EntryType.Directory,
+                // With SymlinkHandling.Follow a link reports its target's type; like DT_UNKNOWN that costs a stat, so it stays
+                // pending until something asks.
+                DT_LNK when batch.Symlinks == SymlinkHandling.Follow => filter is null && subdirs is null
+                    ? DirectoryBatch.PendingLinkType
+                    : ProbeTarget(fd, path, name),
                 DT_LNK => EntryType.SymbolicLink,
                 // DT_UNKNOWN costs a stat per entry (slow on NFS/EFS). Leave it pending when nothing needs the type now
                 // (no entry filter, no walk to feed): DirectoryBatch.GetType resolves it on first use.
                 0 when filter is null && subdirs is null => DirectoryBatch.PendingType,
-                0 => Probe(fd, path, name),
+                0 => ProbeFollowing(Probe(fd, path, name), batch.Symlinks, fd, path, name),
                 _ => EntryType.Other,
             };
             if (type == EntryType.Directory) subdirs?.Add(System.Text.Encoding.UTF8.GetString(name));   // descend regardless of the filter
@@ -243,6 +274,9 @@ internal static unsafe partial class UnixDirectory
         }
         return pos;
     }
+
+    private static EntryType ProbeFollowing(EntryType type, SymlinkHandling symlinks, int fd, string dir, ReadOnlySpan<byte> name) =>
+        symlinks == SymlinkHandling.Follow && type == EntryType.SymbolicLink ? ProbeTarget(fd, dir, name) : type;
 
     private const int AT_SYMLINK_NOFOLLOW = 0x100, AT_STATX_DONT_SYNC = 0x4000;
     private const uint STATX_TYPE = 0x1, STATX_MODE = 0x2, STATX_UID = 0x8, STATX_GID = 0x10, STATX_ATIME = 0x20, STATX_MTIME = 0x40,
@@ -307,8 +341,27 @@ internal static unsafe partial class UnixDirectory
         if ((batch.Fields & StatFields.CreationTime) != 0)
             s.CreationTicks = Math.Min(Ticks(sx + 96), s.ModifiedTicks);
         if ((batch.Fields & StatFields.Attributes) != 0)
-            s.Attributes = Attributes(*(ushort*)(sx + 28), *(uint*)(sx + 20), *(uint*)(sx + 24), batch.GetNameUtf8(i));
+        {
+            int mode = *(ushort*)(sx + 28);
+            s.Attributes = Attributes(mode, *(uint*)(sx + 20), *(uint*)(sx + 24), batch.GetNameUtf8(i));
+            if (batch.Symlinks == SymlinkHandling.Follow && (mode & S_IFMT) == S_IFLNK)
+                s.Attributes = LinkAttributes(fd, batch, i, flags & ~AT_SYMLINK_NOFOLLOW, s.Attributes);
+        }
         batch.SetStat(i, s);
+    }
+
+    // .NET reports a link as ReparsePoint plus Directory / ReadOnly taken from its target. A target that cannot be
+    // stat'ed (dangling) leaves just the link's own attributes. A second statx, so only links pay for it.
+    private static FileAttributes LinkAttributes(int fd, DirectoryBatch batch, int i, int flags, FileAttributes own)
+    {
+        byte* tx = stackalloc byte[256];
+        const uint mask = STATX_MODE | STATX_UID | STATX_GID;
+        nint r;
+        fixed (byte* np = batch.NamesBuffer)
+            r = syscallStatx(SysStatx, fd, np + batch.NameOffset(i), flags, mask, tx);
+        if (r < 0 || (*(uint*)tx & mask) != mask) return own;
+        var target = Attributes(*(ushort*)(tx + 28), *(uint*)(tx + 20), *(uint*)(tx + 24), batch.GetNameUtf8(i));
+        return (target & ~FileAttributes.Normal) | FileAttributes.ReparsePoint;
     }
 
     private static long Ticks(byte* ts) =>
@@ -447,13 +500,14 @@ internal static unsafe partial class UnixDirectory
 
     /// <summary>Zero-allocation batches straight from the kernel's getdents64 buffer. The same batch is reused.</summary>
     internal static IEnumerable<DirectoryBatch> EnumerateGetdentsBatches(
-        string path, int batchSize, StatFields fields, bool allowStale, int parallelism, EntryFilter? filter, NameFilter? nameFilter)
+        string path, int batchSize, StatFields fields, bool allowStale, int parallelism, EntryFilter? filter, NameFilter? nameFilter,
+        SymlinkHandling symlinks)
     {
         nint dir = opendir(path);
         if (dir == 0)
             throw OpenError(path, Marshal.GetLastPInvokeError());
         var buf = ArrayPool<byte>.Shared.Rent(64 * 1024);
-        var batch = new DirectoryBatch(batchSize, fields) { DirectoryPath = path };
+        var batch = new DirectoryBatch(batchSize, fields) { DirectoryPath = path, Symlinks = symlinks };
         int minEntries = FastNativeOptions.StatParallelMinEntries;
         try
         {

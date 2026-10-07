@@ -25,8 +25,11 @@ its output. They add bits to the same `statx` call, not extra calls.
 | `LastAccessTime` | `GetLastAccessTimeUtc` | `stx_atime`, subject to the mount's `relatime`/`noatime` policy |
 | `Attributes` | `GetAttributes` | as .NET derives them: `Directory`; `ReadOnly` if the permission class that applies to the process (owner, a group it is in, other) can read but not write; `Hidden` for names starting with `.`; `ReparsePoint` for symbolic links; `Normal` if none apply |
 
-Symbolic links are not followed. A link reports its own times and `ReparsePoint` (plus `Hidden`), while .NET also adds
-`Directory` and `ReadOnly` from the link's target. Emulated platforms use `FileSystemInfo` and match .NET exactly.
+By default symbolic links are not followed. A link reports its own times and `ReparsePoint` (plus `Hidden`), while .NET
+also adds `Directory` and `ReadOnly` from the link's target. Pass `symlinks: SymlinkHandling.Follow` to match .NET: a link then reports
+`ReparsePoint` plus `Directory` / `ReadOnly` from its target, at the cost of one more `statx` per link (a dangling link
+keeps just its own attributes). Times and size stay the link's own, as in .NET. Emulated platforms use `FileSystemInfo`
+and match .NET exactly.
 
 ## What happens on Linux
 
