@@ -21,9 +21,10 @@ public sealed class TreeFixture : IDisposable
     public void Dispose() => Directory.Delete(Root, recursive: true);
 }
 
-public class WalkTests(TreeFixture fx) : IClassFixture<TreeFixture>
+[ClassDataSource<TreeFixture>(Shared = SharedType.PerClass)]
+public class WalkTests(TreeFixture fx)
 {
-    public static IEnumerable<object[]> Backends() => DirectoryTests.Backends();
+    public static IEnumerable<NativeBackend> Backends() => DirectoryTests.Backends();
 
     private static List<string> Walk(string root, int bs, WalkOptions? o = null)
     {
@@ -40,46 +41,45 @@ public class WalkTests(TreeFixture fx) : IClassFixture<TreeFixture>
         Sorted(Directory.EnumerateFileSystemEntries(fx.Root, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0 })
             .Select(p => Path.GetRelativePath(fx.Root, p)));
 
-    [Theory, MemberData(nameof(Backends))]
-    public void Walk_MatchesSystemIO(NativeBackend backend)
+    [Test, MethodDataSource(nameof(Backends))]
+    public async Task Walk_MatchesSystemIO(NativeBackend backend)
     {
         foreach (int bs in new[] { 1, 7, 64, 100_000 })
-            Assert.Equal(Reference(), Sorted(Walk(fx.Root, bs, new WalkOptions { Backend = backend })));
+            await Assert.That(Sorted(Walk(fx.Root, bs, new WalkOptions { Backend = backend }))).IsEquivalentTo(Reference(), CollectionOrdering.Matching);
     }
 
-    [Fact]
-    public void Walk_BatchesNeverSpanDirectories_AndReportDepth()
+    [Test]
+    public async Task Walk_BatchesNeverSpanDirectories_AndReportDepth()
     {
         foreach (var b in FastDirectory.WalkBatchBuffers(fx.Root, 16))
         {
             int expectedDepth = b.DirectoryPath == fx.Root ? 0 : Path.GetRelativePath(fx.Root, b.DirectoryPath).Split(Path.DirectorySeparatorChar).Length;
-            Assert.Equal(expectedDepth, b.Depth);
+            await Assert.That(b.Depth).IsEqualTo(expectedDepth);
             for (int i = 0; i < b.Count; i++)
-                Assert.Equal(b.DirectoryPath, Path.GetDirectoryName(Path.Join(b.DirectoryPath, b.GetName(i))));
+                await Assert.That(Path.GetDirectoryName(Path.Join(b.DirectoryPath, b.GetName(i)))).IsEqualTo(b.DirectoryPath);
         }
     }
 
-    [Fact]
-    public void Walk_MaxDepth()
+    [Test]
+    public async Task Walk_MaxDepth()
     {
-        Assert.Equal(Sorted(Directory.GetFileSystemEntries(fx.Root).Select(p => Path.GetRelativePath(fx.Root, p))),
-                     Sorted(Walk(fx.Root, 50, new WalkOptions { MaxDepth = 0 })));
+        await Assert.That(Sorted(Walk(fx.Root, 50, new WalkOptions { MaxDepth = 0 }))).IsEquivalentTo(Sorted(Directory.GetFileSystemEntries(fx.Root).Select(p => Path.GetRelativePath(fx.Root, p))), CollectionOrdering.Matching);
         var d1 = Walk(fx.Root, 50, new WalkOptions { MaxDepth = 1 });
-        Assert.Contains(Path.Join("a", "1.txt"), d1);
-        Assert.DoesNotContain(Path.Join("a", "b", "2.txt"), d1);
+        await Assert.That(d1).Contains(Path.Join("a", "1.txt"));
+        await Assert.That(d1).DoesNotContain(Path.Join("a", "b", "2.txt"));
     }
 
-    [Fact]
-    public void Walk_ShouldDescend_Prunes()
+    [Test]
+    public async Task Walk_ShouldDescend_Prunes()
     {
         var got = Walk(fx.Root, 50, new WalkOptions { ShouldDescend = (name, depth) => name != "b" });
-        Assert.Contains(Path.Join("a", "b"), got);                       // the directory itself is listed
-        Assert.DoesNotContain(Path.Join("a", "b", "2.txt"), got);        // but not entered
-        Assert.Contains(Path.Join("a", "x", "4.txt"), got);
+        await Assert.That(got).Contains(Path.Join("a", "b"));                       // the directory itself is listed
+        await Assert.That(got).DoesNotContain(Path.Join("a", "b", "2.txt"));        // but not entered
+        await Assert.That(got).Contains(Path.Join("a", "x", "4.txt"));
     }
 
-    [Theory, MemberData(nameof(Backends))]
-    public void Walk_WithStat_ReportsSizes(NativeBackend backend)
+    [Test, MethodDataSource(nameof(Backends))]
+    public async Task Walk_WithStat_ReportsSizes(NativeBackend backend)
     {
         int checkedFiles = 0;
         var o = new WalkOptions { Fields = StatFields.Size, Backend = backend, StatParallelism = 4 };
@@ -89,19 +89,19 @@ public class WalkTests(TreeFixture fx) : IClassFixture<TreeFixture>
                 var name = b.GetName(i);
                 if (b.Depth == 0 && name.StartsWith("top-"))
                 {
-                    Assert.Equal(int.Parse(name.AsSpan(4, 2)), b.GetSize(i));
+                    await Assert.That(b.GetSize(i)).IsEqualTo(int.Parse(name.AsSpan(4, 2)));
                     checkedFiles++;
                 }
             }
-        Assert.Equal(40, checkedFiles);
+        await Assert.That(checkedFiles).IsEqualTo(40);
     }
 
-    [Fact]
-    public void Walk_MissingRoot_Throws() =>
-        Assert.Throws<DirectoryNotFoundException>(() => FastDirectory.WalkBatchBuffers(Path.Join(fx.Root, "nope"), 10).ToList());
+    [Test]
+    public async Task Walk_MissingRoot_Throws() =>
+        await Assert.That(() => FastDirectory.WalkBatchBuffers(Path.Join(fx.Root, "nope"), 10).ToList()).Throws<DirectoryNotFoundException>();
 
-    [Fact]
-    public void Walk_SymlinkLoop_IsReportedNotFollowed()
+    [Test]
+    public async Task Walk_SymlinkLoop_IsReportedNotFollowed()
     {
         if (OperatingSystem.IsWindows()) return;
         var dir = Path.Combine(Path.GetTempPath(), "fno-loop-" + Guid.NewGuid().ToString("N"));
@@ -115,15 +115,15 @@ public class WalkTests(TreeFixture fx) : IClassFixture<TreeFixture>
             foreach (var b in FastDirectory.WalkBatchBuffers(dir, 10))
                 for (int i = 0; i < b.Count; i++)
                     types[Path.GetRelativePath(dir, Path.Join(b.DirectoryPath, b.GetName(i)))] = b.GetType(i);
-            Assert.Equal(EntryType.SymbolicLink, types[Path.Join("a", "loop")]);
-            Assert.Equal(EntryType.SymbolicLink, types["link-to-a"]);
-            Assert.Equal(4, types.Count);            // a, a/f.txt, a/loop, link-to-a
+            await Assert.That(types[Path.Join("a", "loop")]).IsEqualTo(EntryType.SymbolicLink);
+            await Assert.That(types["link-to-a"]).IsEqualTo(EntryType.SymbolicLink);
+            await Assert.That(types.Count).IsEqualTo(4);            // a, a/f.txt, a/loop, link-to-a
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
 
-    [Fact]
-    public void Walk_Inaccessible_DirectoryIsSkippedOrThrows()
+    [Test]
+    public async Task Walk_Inaccessible_DirectoryIsSkippedOrThrows()
     {
         if (OperatingSystem.IsWindows()) return;
         var dir = Path.Combine(Path.GetTempPath(), "fno-perm-" + Guid.NewGuid().ToString("N"));
@@ -136,9 +136,9 @@ public class WalkTests(TreeFixture fx) : IClassFixture<TreeFixture>
         {
             try { Directory.GetFileSystemEntries(locked); return; } catch (UnauthorizedAccessException) { }   // running as root: nothing to test
 
-            Assert.Throws<UnauthorizedAccessException>(() => Walk(dir, 10));   // as System.IO
+            await Assert.That(() => Walk(dir, 10)).Throws<UnauthorizedAccessException>();   // as System.IO
             var got = Walk(dir, 10, new WalkOptions { IgnoreInaccessible = true });
-            Assert.Equal(new[] { "locked", "ok.txt" }, Sorted(got));
+            await Assert.That(Sorted(got)).IsEquivalentTo(new[] { "locked", "ok.txt" }, CollectionOrdering.Matching);
         }
         finally
         {
@@ -147,8 +147,8 @@ public class WalkTests(TreeFixture fx) : IClassFixture<TreeFixture>
         }
     }
 
-    [Fact]
-    public void Walk_TreeDeeperThanPathMax_OnLinux()
+    [Test]
+    public async Task Walk_TreeDeeperThanPathMax_OnLinux()
     {
         if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture is not (Architecture.X64 or Architecture.Arm64)) return;
         var dir = Path.Combine(Path.GetTempPath(), "fno-deep-" + Guid.NewGuid().ToString("N"));
@@ -176,9 +176,9 @@ public class WalkTests(TreeFixture fx) : IClassFixture<TreeFixture>
                 }
             }
             catch (IOException e) when (e.Message.Contains("errno 24")) { return; }   // EMFILE: fd limit lower than depth
-            Assert.Equal(Levels, dirs);
-            Assert.Equal(1, leaf);
-            Assert.Equal(Levels, maxDepth);
+            await Assert.That(dirs).IsEqualTo(Levels);
+            await Assert.That(leaf).IsEqualTo(1);
+            await Assert.That(maxDepth).IsEqualTo(Levels);
         }
         finally
         {
@@ -197,10 +197,7 @@ public class WalkTests(TreeFixture fx) : IClassFixture<TreeFixture>
     }
 }
 
-[CollectionDefinition("NoParallel", DisableParallelization = true)]
-public class NoParallelCollection;
-
-[Collection("NoParallel")]
+[NotInParallel]
 public partial class FdLimitTests
 {
     [StructLayout(LayoutKind.Sequential)]
@@ -218,10 +215,10 @@ public partial class FdLimitTests
         MakeFullBinaryTree(Path.Combine(path, "r"), depth - 1);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Walk_RunningOutOfFileDescriptors_Throws_NeverSilentlySkips(bool ignoreInaccessible)
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Walk_RunningOutOfFileDescriptors_Throws_NeverSilentlySkips(bool ignoreInaccessible)
     {
         if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture is not (Architecture.X64 or Architecture.Arm64)) return;
 
@@ -234,11 +231,11 @@ public partial class FdLimitTests
             var low = new RLimit { Cur = (ulong)open + 4, Max = original.Max };
             if (setrlimit(RLIMIT_NOFILE, ref low) != 0) return;                 // not allowed here
 
-            var ex = Assert.ThrowsAny<IOException>(() =>
+            var ex = await Assert.That(() =>
             {
                 foreach (var _ in FastDirectory.WalkBatchBuffers(dir, 10, new WalkOptions { IgnoreInaccessible = ignoreInaccessible })) { }
-            });
-            Assert.Contains("errno 24", ex.Message);
+            }).Throws<IOException>();
+            await Assert.That(ex!.Message).Contains("errno 24");
         }
         finally
         {
@@ -247,8 +244,8 @@ public partial class FdLimitTests
         }
     }
 
-    [Fact]
-    public void Walk_BinaryTree_WithEnoughDescriptors_ListsEverything()
+    [Test]
+    public async Task Walk_BinaryTree_WithEnoughDescriptors_ListsEverything()
     {
         var dir = Path.Combine(Path.GetTempPath(), "fno-bt-" + Guid.NewGuid().ToString("N"));
         MakeFullBinaryTree(dir, 10);
@@ -256,7 +253,7 @@ public partial class FdLimitTests
         {
             int n = 0;
             foreach (var b in FastDirectory.WalkBatchBuffers(dir, 10)) n += b.Count;
-            Assert.Equal((1 << 11) - 2, n);          // 2 + 4 + ... + 2^10 directories below the root
+            await Assert.That(n).IsEqualTo((1 << 11) - 2);          // 2 + 4 + ... + 2^10 directories below the root
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
