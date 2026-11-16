@@ -24,62 +24,63 @@ public sealed class LinkDirFixture : IDisposable
     public void Dispose() => Directory.Delete(Path, recursive: true);
 }
 
-public class ClassificationTests(LinkDirFixture fx) : IClassFixture<LinkDirFixture>
+[ClassDataSource<LinkDirFixture>(Shared = SharedType.PerClass)]
+public class ClassificationTests(LinkDirFixture fx)
 {
     private static string[] Sorted(IEnumerable<string> xs) => xs.OrderBy(x => x, StringComparer.Ordinal).ToArray();
 
     // No relative-path form: WalkTests changes the process cwd while test classes run in parallel.
-    public static IEnumerable<object[]> PathForms() => [["abs"], ["trailing-slash"]];
+    public static IEnumerable<string> PathForms() => ["abs", "trailing-slash"];
 
     private string Form(string form) => form == "trailing-slash" ? fx.Path + System.IO.Path.DirectorySeparatorChar : fx.Path;
 
-    [Theory, MemberData(nameof(PathForms))]
-    public void EnumerateFiles_MatchesSystemIO(string form)
+    [Test, MethodDataSource(nameof(PathForms))]
+    public async Task EnumerateFiles_MatchesSystemIO(string form)
     {
         var p = Form(form);
-        Assert.Equal(Sorted(Directory.GetFiles(p)), Sorted(FastDirectory.EnumerateFiles(p)));
+        await Assert.That(Sorted(FastDirectory.EnumerateFiles(p))).IsEquivalentTo(Sorted(Directory.GetFiles(p)), CollectionOrdering.Matching);
     }
 
-    [Theory, MemberData(nameof(PathForms))]
-    public void EnumerateDirectories_MatchesSystemIO(string form)
+    [Test, MethodDataSource(nameof(PathForms))]
+    public async Task EnumerateDirectories_MatchesSystemIO(string form)
     {
         var p = Form(form);
-        Assert.Equal(Sorted(Directory.GetDirectories(p)), Sorted(FastDirectory.EnumerateDirectories(p)));
+        await Assert.That(Sorted(FastDirectory.EnumerateDirectories(p))).IsEquivalentTo(Sorted(Directory.GetDirectories(p)), CollectionOrdering.Matching);
     }
 
-    [Fact]
-    public void SymlinkToDirectory_IsADirectory()
+    [Test]
+    public async Task SymlinkToDirectory_IsADirectory()
     {
         // Pin the semantics explicitly, not only "same as System.IO".
         var dirs = FastDirectory.EnumerateDirectories(fx.Path).Select(System.IO.Path.GetFileName);
         var files = FastDirectory.EnumerateFiles(fx.Path).Select(System.IO.Path.GetFileName);
-        Assert.Equal(["linkdir", "linklinkdir", "realdir"], Sorted(dirs!));
+        await Assert.That(Sorted(dirs!)).IsEquivalentTo(["linkdir", "linklinkdir", "realdir"], CollectionOrdering.Matching);
         string[] expectedFiles = OperatingSystem.IsWindows()
             ? ["dangling", "linkfile", "realfile"]
             : ["dangling", "fifo", "linkfile", "realfile"];
-        Assert.Equal(expectedFiles, Sorted(files!));
+        await Assert.That(Sorted(files!)).IsEquivalentTo(expectedFiles, CollectionOrdering.Matching);
     }
 
     // Entries whose d_type was DT_UNKNOWN and whose probe failed arrive as Unknown; they are resolved by stat.
-    [Theory]
-    [InlineData("realfile", false)]
-    [InlineData("realdir", true)]
-    [InlineData("linkfile", false)]
-    [InlineData("linkdir", true)]
-    [InlineData("dangling", false)]
-    [InlineData("vanished", false)]
-    public void IsDirectoryLike_ResolvesUnknownAndLinks(string name, bool expected)
+    [Test]
+    [Arguments("realfile", false)]
+    [Arguments("realdir", true)]
+    [Arguments("linkfile", false)]
+    [Arguments("linkdir", true)]
+    [Arguments("dangling", false)]
+    [Arguments("vanished", false)]
+    public async Task IsDirectoryLike_ResolvesUnknownAndLinks(string name, bool expected)
     {
-        Assert.Equal(expected, FastDirectory.IsDirectoryLike(fx.Path, new FileEntry(name, EntryType.Unknown)));
+        await Assert.That(FastDirectory.IsDirectoryLike(fx.Path, new FileEntry(name, EntryType.Unknown))).IsEqualTo(expected);
         if (name.StartsWith("link") || name == "dangling")
-            Assert.Equal(expected, FastDirectory.IsDirectoryLike(fx.Path, new FileEntry(name, EntryType.SymbolicLink)));
+            await Assert.That(FastDirectory.IsDirectoryLike(fx.Path, new FileEntry(name, EntryType.SymbolicLink))).IsEqualTo(expected);
     }
 
-    [Fact]
-    public void MissingDirectory_Throws()
+    [Test]
+    public async Task MissingDirectory_Throws()
     {
         var missing = fx.P("nope");
-        Assert.Throws<DirectoryNotFoundException>(() => FastDirectory.EnumerateFiles(missing).ToList());
-        Assert.Throws<DirectoryNotFoundException>(() => FastDirectory.EnumerateDirectories(missing).ToList());
+        await Assert.That(() => FastDirectory.EnumerateFiles(missing).ToList()).Throws<DirectoryNotFoundException>();
+        await Assert.That(() => FastDirectory.EnumerateDirectories(missing).ToList()).Throws<DirectoryNotFoundException>();
     }
 }

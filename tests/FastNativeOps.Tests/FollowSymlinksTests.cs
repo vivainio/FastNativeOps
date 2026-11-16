@@ -22,7 +22,7 @@ public sealed class FollowSymlinksTests : IDisposable
 
     public void Dispose() => Directory.Delete(_dir, recursive: true);
 
-    public static IEnumerable<object[]> Backends() => DirectoryTests.Backends();
+    public static IEnumerable<NativeBackend> Backends() => DirectoryTests.Backends();
 
     private Dictionary<string, EntryType> Types(NativeBackend backend, bool follow, EntryFilter? filter = null)
     {
@@ -35,41 +35,41 @@ public sealed class FollowSymlinksTests : IDisposable
 
     private static readonly EntryFilter Everything = (_, _) => true;
 
-    [Theory, MemberData(nameof(Backends))]
-    public void Links_report_the_type_of_their_target(NativeBackend backend)
+    [Test, MethodDataSource(nameof(Backends))]
+    public async Task Links_report_the_type_of_their_target(NativeBackend backend)
     {
         if (OperatingSystem.IsWindows()) return;
         // null filter: types stay pending until GetType. Everything filter: types are resolved while filling the batch.
         foreach (var filter in new EntryFilter?[] { null, Everything })
         {
             var t = Types(backend, follow: true, filter);
-            Assert.Equal(EntryType.File, t["real.txt"]);
-            Assert.Equal(EntryType.Directory, t["realdir"]);
-            Assert.Equal(EntryType.File, t["link-to-file"]);
-            Assert.Equal(EntryType.Directory, t["link-to-dir"]);
-            Assert.Equal(EntryType.Directory, t["chain"]);
-            Assert.Equal(EntryType.Directory, t[".hidden-link-to-dir"]);
-            Assert.Equal(EntryType.SymbolicLink, t["dangling"]);
-            Assert.Equal(EntryType.SymbolicLink, t["loop"]);
+            await Assert.That(t["real.txt"]).IsEqualTo(EntryType.File);
+            await Assert.That(t["realdir"]).IsEqualTo(EntryType.Directory);
+            await Assert.That(t["link-to-file"]).IsEqualTo(EntryType.File);
+            await Assert.That(t["link-to-dir"]).IsEqualTo(EntryType.Directory);
+            await Assert.That(t["chain"]).IsEqualTo(EntryType.Directory);
+            await Assert.That(t[".hidden-link-to-dir"]).IsEqualTo(EntryType.Directory);
+            await Assert.That(t["dangling"]).IsEqualTo(EntryType.SymbolicLink);
+            await Assert.That(t["loop"]).IsEqualTo(EntryType.SymbolicLink);
             if (backend != NativeBackend.Readdir || OperatingSystem.IsLinux())
-                Assert.Contains(t["link-to-null"], new[] { EntryType.Other, EntryType.File });   // File only on the path-based fallback
+                await Assert.That(new[] { EntryType.Other, EntryType.File }).Contains(t["link-to-null"]);   // File only on the path-based fallback
         }
     }
 
-    [Theory, MemberData(nameof(Backends))]
-    public void Without_Follow_links_stay_links(NativeBackend backend)
+    [Test, MethodDataSource(nameof(Backends))]
+    public async Task Without_Follow_links_stay_links(NativeBackend backend)
     {
         if (OperatingSystem.IsWindows()) return;
         foreach (var filter in new EntryFilter?[] { null, Everything })
         {
             var t = Types(backend, follow: false, filter);
             foreach (var name in new[] { "link-to-file", "link-to-dir", "chain", "dangling", "loop", "link-to-null" })
-                Assert.Equal(EntryType.SymbolicLink, t[name]);
+                await Assert.That(t[name]).IsEqualTo(EntryType.SymbolicLink);
         }
     }
 
-    [Theory, MemberData(nameof(Backends))]
-    public void Directory_and_NotDirectory_filters_match_System_IO(NativeBackend backend)
+    [Test, MethodDataSource(nameof(Backends))]
+    public async Task Directory_and_NotDirectory_filters_match_System_IO(NativeBackend backend)
     {
         if (OperatingSystem.IsWindows()) return;
         List<string> Names(EntryFilter f)
@@ -81,24 +81,26 @@ public sealed class FollowSymlinksTests : IDisposable
         }
         List<string> Sorted(IEnumerable<string> p) => p.OrderBy(x => x, StringComparer.Ordinal).ToList();
 
-        Assert.Equal(Sorted(Directory.GetDirectories(_dir)), Names(EntryFilters.OfType(EntryType.Directory)));
-        Assert.Equal(Sorted(Directory.GetFiles(_dir)), Names(EntryFilters.OfType(EntryType.NotDirectory)));
+        await Assert.That(Names(EntryFilters.OfType(EntryType.Directory))).IsEquivalentTo(Sorted(Directory.GetDirectories(_dir)), CollectionOrdering.Matching);
+        await Assert.That(Names(EntryFilters.OfType(EntryType.NotDirectory))).IsEquivalentTo(Sorted(Directory.GetFiles(_dir)), CollectionOrdering.Matching);
     }
 
-    [Theory, MemberData(nameof(Backends))]
-    public void NameFilter_runs_before_the_link_is_resolved(NativeBackend backend)
+    [Test, MethodDataSource(nameof(Backends))]
+    public async Task NameFilter_runs_before_the_link_is_resolved(NativeBackend backend)
     {
         if (OperatingSystem.IsWindows()) return;
         var seen = new List<string>();
         EntryFilter spy = (name, type) => { seen.Add(System.Text.Encoding.UTF8.GetString(name)); return true; };
         foreach (var batch in FastDirectory.EnumerateBatchBuffers(_dir, 8, backend, filter: spy,
                      nameFilter: EntryFilters.Glob("real*"), symlinks: SymlinkHandling.Follow))
-            Assert.All(Enumerable.Range(0, batch.Count), i => Assert.StartsWith("real", batch.GetName(i)));
-        Assert.All(seen, n => Assert.StartsWith("real", n));
+            for (int i = 0; i < batch.Count; i++)
+                await Assert.That(batch.GetName(i)).StartsWith("real");
+        foreach (var n in seen)
+            await Assert.That(n).StartsWith("real");
     }
 
-    [Theory, MemberData(nameof(Backends))]
-    public void Attributes_match_FileSystemInfo_for_links(NativeBackend backend)
+    [Test, MethodDataSource(nameof(Backends))]
+    public async Task Attributes_match_FileSystemInfo_for_links(NativeBackend backend)
     {
         if (OperatingSystem.IsWindows()) return;
         var expected = new DirectoryInfo(_dir)
@@ -112,30 +114,30 @@ public sealed class FollowSymlinksTests : IDisposable
                          filter: filter, symlinks: SymlinkHandling.Follow))
                 for (int i = 0; i < batch.Count; i++) got[batch.GetName(i)] = batch.GetAttributes(i);
 
-            Assert.Equal(expected.Keys.OrderBy(x => x), got.Keys.OrderBy(x => x));
+            await Assert.That(got.Keys.OrderBy(x => x)).IsEquivalentTo(expected.Keys.OrderBy(x => x), CollectionOrdering.Matching);
             foreach (var (name, attrs) in expected)
-                Assert.True(attrs == got[name], $"{name}: .NET {attrs}, got {got[name]}");
+                await Assert.That(attrs == got[name]).IsTrue().Because($"{name}: .NET {attrs}, got {got[name]}");
         }
     }
 
-    [Fact]
-    public void Without_Follow_attributes_stay_the_links_own()
+    [Test]
+    public async Task Without_Follow_attributes_stay_the_links_own()
     {
         if (!OperatingSystem.IsLinux()) return;
         foreach (var batch in FastDirectory.EnumerateBatchBuffers(_dir, 100, fields: StatFields.Attributes))
             for (int i = 0; i < batch.Count; i++)
                 if (batch.GetName(i) == "link-to-dir")
-                    Assert.Equal(FileAttributes.ReparsePoint, batch.GetAttributes(i));
+                    await Assert.That(batch.GetAttributes(i)).IsEqualTo(FileAttributes.ReparsePoint);
     }
 
-    [Fact]
-    public void Walk_does_not_follow_links()
+    [Test]
+    public async Task Walk_does_not_follow_links()
     {
         if (OperatingSystem.IsWindows()) return;
         var types = new Dictionary<string, EntryType>();
         foreach (var batch in FastDirectory.WalkBatchBuffers(_dir, 100))
             for (int i = 0; i < batch.Count; i++)
                 if (batch.Depth == 0) types[batch.GetName(i)] = batch.GetType(i);
-        Assert.Equal(EntryType.SymbolicLink, types["link-to-dir"]);
+        await Assert.That(types["link-to-dir"]).IsEqualTo(EntryType.SymbolicLink);
     }
 }
